@@ -25,6 +25,13 @@ class DetailPage {
         // 多音频播放管理
         this.audioPlayers = new Map(); // 存储所有音频播放器 {record_id: audioElement}
         this.playingRecords = new Set(); // 当前正在播放的record_id集合
+        this.audioLoadingStates = new Map(); // 音频加载状态 {record_id: 'loading'|'loaded'|'error'}
+        this.audioPlayPromises = new Map(); // 防止重复播放的Promise {record_id: Promise}
+        
+        // 防抖机制
+        this.proximityCheckTimeout = null;
+        this.lastProximityCheck = 0;
+        this.proximityCheckInterval = 1000; // 1秒防抖间隔
         
         this.bindEvents();
     }
@@ -330,29 +337,98 @@ class DetailPage {
     async playAudio(record, userId) {
         if (!record.record_id) return;
         
+        const recordId = record.record_id;
+        
         // 检查是否已经在播放相同的音频
-        if (this.playingRecords.has(record.record_id)) {
-            console.log(`音频 ${record.record_id} 已在播放中`);
+        if (this.playingRecords.has(recordId)) {
+            console.log(`音频 ${recordId} 已在播放中`);
             return;
         }
         
+        // 检查是否正在加载相同的音频
+        if (this.audioPlayPromises.has(recordId)) {
+            console.log(`音频 ${recordId} 正在加载中，等待完成`);
+            try {
+                await this.audioPlayPromises.get(recordId);
+            } catch (error) {
+                console.warn(`等待音频 ${recordId} 加载失败:`, error);
+            }
+            return;
+        }
+        
+        // 创建播放Promise来防止重复播放
+        const playPromise = this._playAudioInternal(record, userId);
+        this.audioPlayPromises.set(recordId, playPromise);
+        
         try {
-            const downloadUrl = `https://nyw6vsud2p.ap-northeast-1.awsapprunner.com/api/v1/edit/downloadCreatedAudio?user_id=${userId}&record_id=${record.record_id}`;
+            await playPromise;
+        } catch (error) {
+            console.error(`音频 ${recordId} 播放失败:`, error);
+            // 清理错误状态
+            this.audioLoadingStates.set(recordId, 'error');
+            this.playingRecords.delete(recordId);
+            this.audioPlayers.delete(recordId);
+        } finally {
+            // 清理Promise引用
+            this.audioPlayPromises.delete(recordId);
+        }
+    }
+
+    // 内部播放方法
+    async _playAudioInternal(record, userId) {
+        const recordId = record.record_id;
+        
+        try {
+            // 设置加载状态
+            this.audioLoadingStates.set(recordId, 'loading');
+            
+            const downloadUrl = `https://nyw6vsud2p.ap-northeast-1.awsapprunner.com/api/v1/edit/downloadCreatedAudio?user_id=${userId}&record_id=${recordId}`;
             
             // 创建新的音频元素
             const audioElement = document.createElement('audio');
             audioElement.preload = 'auto';
+            audioElement.crossOrigin = 'anonymous'; // 添加跨域支持
+            
+            // 设置音频属性
+            audioElement.volume = 1.0;
+            audioElement.loop = record.isLoop || false;
             
             // 检查缓存
-            if (this.audioCache.has(record.record_id)) {
-                audioElement.src = this.audioCache.get(record.record_id);
+            if (this.audioCache.has(recordId)) {
+                audioElement.src = this.audioCache.get(recordId);
             } else {
                 audioElement.src = downloadUrl;
-                this.audioCache.set(record.record_id, downloadUrl);
+                this.audioCache.set(recordId, downloadUrl);
             }
             
-            // 设置播放属性
-            audioElement.loop = record.isLoop || false;
+            // 等待音频加载完成
+            await new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                    reject(new Error(`音频 ${recordId} 加载超时`));
+                }, 10000); // 10秒超时
+                
+                const handleCanPlay = () => {
+                    clearTimeout(timeout);
+                    audioElement.removeEventListener('canplay', handleCanPlay);
+                    audioElement.removeEventListener('error', handleError);
+                    resolve();
+                };
+                
+                const handleError = (error) => {
+                    clearTimeout(timeout);
+                    audioElement.removeEventListener('canplay', handleCanPlay);
+                    audioElement.removeEventListener('error', handleError);
+                    reject(new Error(`音频 ${recordId} 加载失败: ${error.message || '未知错误'}`));
+                };
+                
+                audioElement.addEventListener('canplay', handleCanPlay);
+                audioElement.addEventListener('error', handleError);
+                
+                // 如果音频已经可以播放，立即解析
+                if (audioElement.readyState >= 2) {
+                    handleCanPlay();
+                }
+            });
             
             // 设置播放范围
             if (record.start_time && record.end_time) {
@@ -361,7 +437,7 @@ class DetailPage {
                         if (record.isLoop) {
                             audioElement.currentTime = record.start_time;
                         } else {
-                            this.stopSpecificAudio(record.record_id);
+                            this.stopSpecificAudio(recordId);
                         }
                     }
                 };
@@ -380,31 +456,50 @@ class DetailPage {
             
             // 音频结束时的处理
             audioElement.addEventListener('ended', () => {
-                this.stopSpecificAudio(record.record_id);
+                this.stopSpecificAudio(recordId);
+            });
+            
+            // 音频错误处理
+            audioElement.addEventListener('error', (error) => {
+                console.error(`音频 ${recordId} 播放错误:`, error);
+                this.stopSpecificAudio(recordId);
             });
             
             // 开始播放
             await audioElement.play();
             
+            // 设置加载完成状态
+            this.audioLoadingStates.set(recordId, 'loaded');
+            
             // 记录正在播放的音频
-            this.audioPlayers.set(record.record_id, audioElement);
-            this.playingRecords.add(record.record_id);
+            this.audioPlayers.set(recordId, audioElement);
+            this.playingRecords.add(recordId);
             this.isPlaying = true;
             
             this.updateUI();
             
-            console.log(`开始播放音频: ${record.record_id}, 循环: ${record.isLoop}, 当前播放数量: ${this.playingRecords.size}`);
+            console.log(`开始播放音频: ${recordId}, 循环: ${record.isLoop}, 当前播放数量: ${this.playingRecords.size}`);
             
         } catch (error) {
-            console.error('音频播放失败:', error);
-            window.app.showToast('音频播放失败');
+            console.error(`音频 ${recordId} 播放失败:`, error);
+            this.audioLoadingStates.set(recordId, 'error');
+            
+            // 清理可能创建的音频元素
+            const audioElement = this.audioPlayers.get(recordId);
+            if (audioElement) {
+                this._cleanupAudioElement(audioElement, recordId);
+            }
+            
+            // 显示错误提示
+            window.app.showToast(`音频播放失败: ${error.message || '未知错误'}`);
+            throw error;
         }
     }
 
-    // 停止特定音频播放
-    stopSpecificAudio(recordId) {
-        const audioElement = this.audioPlayers.get(recordId);
-        if (audioElement) {
+    // 清理音频元素的辅助方法
+    _cleanupAudioElement(audioElement, recordId) {
+        try {
+            // 暂停音频
             audioElement.pause();
             audioElement.currentTime = 0;
             
@@ -420,28 +515,78 @@ class DetailPage {
             if (audioElement.parentNode) {
                 audioElement.parentNode.removeChild(audioElement);
             }
-            
-            // 从管理器中移除
-            this.audioPlayers.delete(recordId);
-            this.playingRecords.delete(recordId);
-            
-            console.log(`停止播放音频: ${recordId}, 剩余播放数量: ${this.playingRecords.size}`);
-            
-            // 更新播放状态
-            this.isPlaying = this.playingRecords.size > 0;
-            this.updateUI();
+        } catch (error) {
+            console.warn(`清理音频元素 ${recordId} 时出错:`, error);
         }
+    }
+
+    // 停止特定音频播放
+    stopSpecificAudio(recordId) {
+        if (!recordId) return;
+        
+        console.log(`尝试停止音频: ${recordId}`);
+        
+        // 清理加载Promise
+        if (this.audioPlayPromises.has(recordId)) {
+            console.log(`清理音频 ${recordId} 的加载Promise`);
+            this.audioPlayPromises.delete(recordId);
+        }
+        
+        // 清理加载状态
+        this.audioLoadingStates.delete(recordId);
+        
+        const audioElement = this.audioPlayers.get(recordId);
+        if (audioElement) {
+            try {
+                // 使用辅助方法清理音频元素
+                this._cleanupAudioElement(audioElement, recordId);
+                
+                // 从管理器中移除
+                this.audioPlayers.delete(recordId);
+                this.playingRecords.delete(recordId);
+                
+                console.log(`成功停止播放音频: ${recordId}, 剩余播放数量: ${this.playingRecords.size}`);
+                
+            } catch (error) {
+                console.error(`停止音频 ${recordId} 时出错:`, error);
+                // 即使出错也要从管理器中移除
+                this.audioPlayers.delete(recordId);
+                this.playingRecords.delete(recordId);
+            }
+        } else {
+            // 如果找不到音频元素，也要从管理器中移除
+            this.playingRecords.delete(recordId);
+            console.log(`音频 ${recordId} 不在播放列表中，已清理`);
+        }
+        
+        // 更新播放状态
+        this.isPlaying = this.playingRecords.size > 0;
+        this.updateUI();
     }
 
     // 停止所有音频播放
     stopAudio() {
+        console.log('停止所有音频播放');
+        
+        // 清理所有加载Promise
+        this.audioPlayPromises.clear();
+        
+        // 清理所有加载状态
+        this.audioLoadingStates.clear();
+        
         // 停止所有正在播放的音频
-        for (const recordId of this.playingRecords) {
+        const recordIds = Array.from(this.playingRecords);
+        for (const recordId of recordIds) {
             this.stopSpecificAudio(recordId);
         }
         
+        // 确保状态重置
         this.isPlaying = false;
+        this.playingRecords.clear();
+        this.audioPlayers.clear();
+        
         this.updateUI();
+        console.log('所有音频已停止');
     }
 
     setData(data) {
@@ -703,12 +848,24 @@ class DetailPage {
     }
 
     stopTracking() {
+        console.log('停止追踪');
         this.isTracking = false;
         this.buttonText = 'start tracking and playing';
         this.progress = 0;
         
+        // 清理防抖定时器
+        if (this.proximityCheckTimeout) {
+            clearTimeout(this.proximityCheckTimeout);
+            this.proximityCheckTimeout = null;
+        }
+        this.lastProximityCheck = 0;
+        
         // 停止所有音频播放
         this.stopAudio();
+        
+        // 确保状态重置
+        this.isPlaying = false;
+        this.isButtonDisabled = false;
         
         this.updateUI();
         
@@ -716,14 +873,29 @@ class DetailPage {
     }
 
     goBack() {
+        console.log('返回首页，清理资源');
+        
         // 停止追踪
         if (this.isTracking) {
             this.stopTracking();
         }
         
+        // 清理防抖定时器
+        if (this.proximityCheckTimeout) {
+            clearTimeout(this.proximityCheckTimeout);
+            this.proximityCheckTimeout = null;
+        }
+        
+        // 清理所有音频资源
+        this.stopAudio();
+        
+        // 清理缓存
+        this.audioCache.clear();
+        
         // 清理地图资源
         if (this.map) {
-            this.map.remove();
+            this.map.off(); // 移除所有事件
+            this.map.remove(); // 彻底销毁地图实例和DOM
             this.map = null;
         }
         this.leafletMarkers = [];
@@ -753,12 +925,33 @@ class DetailPage {
         // 更新用户位置标记
         this.updateUserMarker(location);
         
-        // 如果正在追踪，可以在这里添加距离检测逻辑
+        // 如果正在追踪，使用防抖机制进行距离检测
         if (this.isTracking) {
-            console.log('Tracking is active, checking proximity to markers');
-            this.checkProximityToMarkers(location);
+            this.debouncedProximityCheck(location);
         } else {
             console.log('Tracking is not active, skipping proximity check');
+        }
+    }
+
+    // 防抖的位置检查
+    debouncedProximityCheck(location) {
+        const now = Date.now();
+        
+        // 清除之前的定时器
+        if (this.proximityCheckTimeout) {
+            clearTimeout(this.proximityCheckTimeout);
+        }
+        
+        // 如果距离上次检查时间太短，延迟执行
+        if (now - this.lastProximityCheck < this.proximityCheckInterval) {
+            this.proximityCheckTimeout = setTimeout(() => {
+                this.checkProximityToMarkers(location);
+                this.lastProximityCheck = Date.now();
+            }, this.proximityCheckInterval - (now - this.lastProximityCheck));
+        } else {
+            // 直接执行
+            this.checkProximityToMarkers(location);
+            this.lastProximityCheck = now;
         }
     }
 
@@ -821,6 +1014,12 @@ class DetailPage {
 
     // 优化后的音频播放判断逻辑（支持多音频同时播放）
     async checkProximityToMarkers(userLocation) {
+        // 如果不在追踪状态，直接返回
+        if (!this.isTracking) {
+            console.log('不在追踪状态，跳过位置检查');
+            return;
+        }
+        
         console.log('Starting proximity check for location:', userLocation);
         const storedData = this.getDataFromLocalStorage(this.userId);
         if (!storedData || !storedData.locations) {
@@ -861,8 +1060,23 @@ class DetailPage {
         }
         
         // 播放所有符合条件的音频
+        const playPromises = [];
         for (const { record } of playableRecords) {
-            await this.playAudio(record, this.userId);
+            try {
+                const playPromise = this.playAudio(record, this.userId);
+                playPromises.push(playPromise);
+            } catch (error) {
+                console.error(`播放音频 ${record.record_id} 失败:`, error);
+            }
+        }
+        
+        // 等待所有播放操作完成
+        if (playPromises.length > 0) {
+            try {
+                await Promise.allSettled(playPromises);
+            } catch (error) {
+                console.warn('部分音频播放失败:', error);
+            }
         }
         
         // 停止不在范围内的音频

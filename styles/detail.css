@@ -103,11 +103,11 @@
 /* 4. 按钮部分 */
 .button-section {
     margin-top: 50px;
-    padding: 25px 20px 25px 25px;
+    padding: 10px 20px 15px 20px;
     background-color: #f12a2e;
     border-radius: 15px;
-    width: 90%;
-    max-width: 395px;
+    width: 95%;
+    max-width: 450px;
     align-self: center;
     position: relative;
     overflow: hidden;
