@@ -22,6 +22,10 @@ class DetailPage {
         this.storedData = null; // 存储的数据
         this.isInitializing = false; // 防止重复初始化的标志
         
+        // 多音频播放管理
+        this.audioPlayers = new Map(); // 存储所有音频播放器 {record_id: audioElement}
+        this.playingRecords = new Set(); // 当前正在播放的record_id集合
+        
         this.bindEvents();
     }
 
@@ -322,12 +326,12 @@ class DetailPage {
         }
     }
 
-    // 播放音频文件
+    // 播放音频文件（支持多音频同时播放）
     async playAudio(record, userId) {
-        if (!this.audioManager || !record.record_id) return;
+        if (!record.record_id) return;
         
         // 检查是否已经在播放相同的音频
-        if (this.currentPlayingRecord && this.currentPlayingRecord.record_id === record.record_id && this.isPlaying) {
+        if (this.playingRecords.has(record.record_id)) {
             console.log(`音频 ${record.record_id} 已在播放中`);
             return;
         }
@@ -335,54 +339,61 @@ class DetailPage {
         try {
             const downloadUrl = `https://nyw6vsud2p.ap-northeast-1.awsapprunner.com/api/v1/edit/downloadCreatedAudio?user_id=${userId}&record_id=${record.record_id}`;
             
+            // 创建新的音频元素
+            const audioElement = document.createElement('audio');
+            audioElement.preload = 'auto';
+            
             // 检查缓存
             if (this.audioCache.has(record.record_id)) {
-                this.audioManager.src = this.audioCache.get(record.record_id);
+                audioElement.src = this.audioCache.get(record.record_id);
             } else {
-                // 设置音频源
-                this.audioManager.src = downloadUrl;
-                
-                // 缓存音频URL
+                audioElement.src = downloadUrl;
                 this.audioCache.set(record.record_id, downloadUrl);
             }
             
-            // 清除之前的事件监听器
-            this.audioManager.removeEventListener('timeupdate', this.timeUpdateHandler);
-            this.audioManager.removeEventListener('loadedmetadata', this.loadedMetadataHandler);
-            
-            // 设置播放属性 - 使用localStorage中的isLoop参数
-            this.audioManager.loop = record.isLoop || false;
+            // 设置播放属性
+            audioElement.loop = record.isLoop || false;
             
             // 设置播放范围
             if (record.start_time && record.end_time) {
-                this.timeUpdateHandler = () => {
-                    if (this.audioManager.currentTime >= record.end_time) {
+                const timeUpdateHandler = () => {
+                    if (audioElement.currentTime >= record.end_time) {
                         if (record.isLoop) {
-                            this.audioManager.currentTime = record.start_time;
+                            audioElement.currentTime = record.start_time;
                         } else {
-                            this.audioManager.pause();
-                            this.isPlaying = false;
-                            this.currentPlayingRecord = null;
-                            this.updateUI();
+                            this.stopSpecificAudio(record.record_id);
                         }
                     }
                 };
                 
-                this.loadedMetadataHandler = () => {
-                    this.audioManager.currentTime = record.start_time;
+                const loadedMetadataHandler = () => {
+                    audioElement.currentTime = record.start_time;
                 };
                 
-                this.audioManager.addEventListener('timeupdate', this.timeUpdateHandler);
-                this.audioManager.addEventListener('loadedmetadata', this.loadedMetadataHandler);
+                audioElement.addEventListener('timeupdate', timeUpdateHandler);
+                audioElement.addEventListener('loadedmetadata', loadedMetadataHandler);
+                
+                // 存储事件处理器以便后续清理
+                audioElement._timeUpdateHandler = timeUpdateHandler;
+                audioElement._loadedMetadataHandler = loadedMetadataHandler;
             }
             
+            // 音频结束时的处理
+            audioElement.addEventListener('ended', () => {
+                this.stopSpecificAudio(record.record_id);
+            });
+            
             // 开始播放
-            await this.audioManager.play();
+            await audioElement.play();
+            
+            // 记录正在播放的音频
+            this.audioPlayers.set(record.record_id, audioElement);
+            this.playingRecords.add(record.record_id);
             this.isPlaying = true;
-            this.currentPlayingRecord = record;
+            
             this.updateUI();
             
-            console.log(`开始播放音频: ${record.record_id}, 循环: ${record.isLoop}`);
+            console.log(`开始播放音频: ${record.record_id}, 循环: ${record.isLoop}, 当前播放数量: ${this.playingRecords.size}`);
             
         } catch (error) {
             console.error('音频播放失败:', error);
@@ -390,25 +401,47 @@ class DetailPage {
         }
     }
 
-    // 停止音频播放
-    stopAudio() {
-        if (this.audioManager) {
-            this.audioManager.pause();
-            this.audioManager.currentTime = 0;
-            this.audioManager.loop = false;
+    // 停止特定音频播放
+    stopSpecificAudio(recordId) {
+        const audioElement = this.audioPlayers.get(recordId);
+        if (audioElement) {
+            audioElement.pause();
+            audioElement.currentTime = 0;
             
             // 清除事件监听器
-            if (this.timeUpdateHandler) {
-                this.audioManager.removeEventListener('timeupdate', this.timeUpdateHandler);
+            if (audioElement._timeUpdateHandler) {
+                audioElement.removeEventListener('timeupdate', audioElement._timeUpdateHandler);
             }
-            if (this.loadedMetadataHandler) {
-                this.audioManager.removeEventListener('loadedmetadata', this.loadedMetadataHandler);
+            if (audioElement._loadedMetadataHandler) {
+                audioElement.removeEventListener('loadedmetadata', audioElement._loadedMetadataHandler);
             }
             
-            this.isPlaying = false;
-            this.currentPlayingRecord = null;
+            // 从DOM中移除
+            if (audioElement.parentNode) {
+                audioElement.parentNode.removeChild(audioElement);
+            }
+            
+            // 从管理器中移除
+            this.audioPlayers.delete(recordId);
+            this.playingRecords.delete(recordId);
+            
+            console.log(`停止播放音频: ${recordId}, 剩余播放数量: ${this.playingRecords.size}`);
+            
+            // 更新播放状态
+            this.isPlaying = this.playingRecords.size > 0;
             this.updateUI();
         }
+    }
+
+    // 停止所有音频播放
+    stopAudio() {
+        // 停止所有正在播放的音频
+        for (const recordId of this.playingRecords) {
+            this.stopSpecificAudio(recordId);
+        }
+        
+        this.isPlaying = false;
+        this.updateUI();
     }
 
     setData(data) {
@@ -428,6 +461,16 @@ class DetailPage {
             document.getElementById('author-name').textContent = this.itemDetail.author;
             document.getElementById('creation-time').textContent = this.itemDetail.creationTime;
             document.getElementById('intro-text').textContent = this.itemDetail.description;
+        }
+
+        // 更新按钮文本，显示播放数量
+        const playCount = this.playingRecords.size;
+        if (playCount > 0) {
+            this.buttonText = `stop tracking (${playCount} 音频播放中)`;
+        } else if (this.isTracking) {
+            this.buttonText = 'stop tracking';
+        } else {
+            this.buttonText = 'download audio and start tracking';
         }
 
         // 更新按钮状态
@@ -661,10 +704,11 @@ class DetailPage {
         this.isTracking = false;
         this.buttonText = 'download audio and start tracking';
         this.progress = 0;
-        this.updateUI();
         
-        // 停止音频播放
+        // 停止所有音频播放
         this.stopAudio();
+        
+        this.updateUI();
         
         window.app.showToast('已停止追踪');
     }
@@ -773,7 +817,7 @@ class DetailPage {
             .sort((a, b) => a.distance - b.distance);
     }
 
-    // 优化后的音频播放判断逻辑
+    // 优化后的音频播放判断逻辑（支持多音频同时播放）
     async checkProximityToMarkers(userLocation) {
         console.log('Starting proximity check for location:', userLocation);
         const storedData = this.getDataFromLocalStorage(this.userId);
@@ -786,7 +830,9 @@ class DetailPage {
         const nearby = this.findNearbyMarkers(userLocation, 100);
         console.log('Found', nearby.length, 'nearby markers within 100m');
         
-        let foundPlayable = false;
+        const playableRecords = [];
+        
+        // 检查所有附近的marker
         for (const { marker, distance, idx } of nearby) {
             const key = `${marker.latitude}_${marker.longitude}`;
             const audioData = storedData.records[key];
@@ -806,21 +852,28 @@ class DetailPage {
                 const innerRadius = record.inner_radius;
                 console.log('checking play state', record.record_id, distance, outerRadius, innerRadius);
                 if (distance <= outerRadius && distance >= innerRadius) {
-                    if (!this.isPlaying) {
-                        console.log(`进入音频点${idx + 1}，距离: ${distance}m，播放record:`, record.record_id);
-                        await this.playAudio(record, this.userId);
-                    }
-                    foundPlayable = true;
-                    break;
+                    playableRecords.push({ record, distance, idx });
+                    console.log(`音频点${idx + 1}在播放范围内，距离: ${distance}m，record:`, record.record_id);
                 }
             }
-            if (foundPlayable) break;
         }
-        // 100m内没有可播放音频，停止播放
-        if (!foundPlayable && this.isPlaying) {
-            console.log('100m范围内无可播放音频，停止播放');
-            this.stopAudio();
+        
+        // 播放所有符合条件的音频
+        for (const { record } of playableRecords) {
+            await this.playAudio(record, this.userId);
         }
+        
+        // 停止不在范围内的音频
+        const currentPlayingIds = Array.from(this.playingRecords);
+        for (const recordId of currentPlayingIds) {
+            const isStillInRange = playableRecords.some(({ record }) => record.record_id === recordId);
+            if (!isStillInRange) {
+                console.log(`音频 ${recordId} 已离开播放范围，停止播放`);
+                this.stopSpecificAudio(recordId);
+            }
+        }
+        
+        console.log(`位置检查完成，当前播放 ${this.playingRecords.size} 个音频`);
     }
 }
 
