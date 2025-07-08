@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WalkingWhisper - 详情</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="stylesheet" href="styles/detail.css">
+    <link href="https://fonts.googleapis.com/css2?family=Futura:wght@400;700&family=Inter:wght@400;500&family=Outfit:wght@700&display=swap" rel="stylesheet">
+    <!-- 引入Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+</head>
+<body>
+    <!-- 详情页 -->
+    <div id="detail-page" class="page active">
+        <!-- 返回按钮 -->
+        <div class="back-button" id="back-button">
+            <span>&lt;</span>
+        </div>
+        <!-- 1. 基本信息部分 -->
+        <div class="info-section">
+            <div class="work-title" id="work-title">作品标题</div>
+            <div class="info-text author-name" id="author-name">作者</div>
+            <div class="info-text creation-time" id="creation-time">创建时间</div>
+        </div>
+
+        <!-- 2. 地图部分 -->
+        <div class="map-section">
+            <div class="map-container">
+                <div id="map" class="map"></div>
+                <div id="loading-container" class="loading-container">
+                    <div class="loading-text">正在加载位置数据...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. 简介部分 -->
+        <div class="intro-section">
+            <div class="intro-text" id="intro-text">作品简介</div>
+        </div>
+
+        <!-- 4. 按钮部分 -->
+        <div class="button-section" id="play-button">
+            <div class="button-text" id="button-text">download audio and start tracking</div>
+            <div class="progress-bar" id="progress-bar"></div>
+        </div>
+    </div>
+
+    <!-- 音频元素 -->
+    <audio id="audio-player" preload="none"></audio>
+
+    <!-- 脚本 -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="js/app.js"></script>
+    <script src="js/detail.js"></script>
+    <script src="js/utils.js"></script>
+</body>
+</html> 

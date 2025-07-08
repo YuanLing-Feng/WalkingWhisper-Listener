@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WalkingWhisper</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="stylesheet" href="styles/index.css">
+    <link href="https://fonts.googleapis.com/css2?family=Futura:wght@400;700&family=Inter:wght@400;500&family=Outfit:wght@700&display=swap" rel="stylesheet">
+    <!-- 引入Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+</head>
+<body>
+    <!-- 首页 -->
+    <div id="index-page" class="page active">
+        <div class="container">
+            <div class="header">
+                <div class="welcome-text">Welcome to WalkingWhisper,</div>
+                <div class="sub-text">Select a channel and walking to listen</div>
+            </div>
+            
+            <div class="arrow">
+                <span class="icon-arrow">↓</span>
+            </div>
+
+            <div class="debug-info" id="debug-info">
+                <span>正在获取位置信息...</span>
+            </div>
+
+            <div class="item-list" id="work-list">
+                <div class="loading">正在加载作品列表...</div>
+            </div>
+        </div>
+    </div>
+
+
+
+    <!-- 音频元素 -->
+    <audio id="audio-player" preload="none"></audio>
+
+    <!-- 脚本 -->
+    <!-- <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&libraries=geometry"></script> -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="js/app.js"></script>
+    <script src="js/index.js"></script>
+    <script src="js/utils.js"></script>
+</body>
+</html> 

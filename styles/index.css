@@ -1,0 +1,162 @@
+/* 首页样式 */
+.container {
+    padding: 40px 0 0 0;
+    background-color: #FFF8F8;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.header {
+    text-align: center;
+    margin-bottom: 100px;
+}
+
+.welcome-text {
+    font-size: 36px;
+    font-family: 'Futura', sans-serif;
+    color: #333;
+    margin-bottom: 20px;
+}
+
+.sub-text {
+    font-size: 32px;
+    font-family: 'Futura', sans-serif;
+    color: #666;
+}
+
+.arrow {
+    text-align: center;
+    margin-bottom: 100px;
+}
+
+.icon-arrow {
+    font-size: 60px;
+    color: #666;
+    animation: bounce 2s infinite;
+    display: inline-block;
+}
+
+@keyframes bounce {
+    0%, 20%, 50%, 80%, 100% {
+        transform: translateY(0);
+    }
+    40% {
+        transform: translateY(-20px);
+    }
+    60% {
+        transform: translateY(-10px);
+    }
+}
+
+.item-list {
+    width: 100%;
+    padding: 0 20px;
+    box-sizing: border-box;
+    margin-bottom: 20px;
+    min-height: calc(100vh - 480px);
+}
+
+.item {
+    background: #E94B4B;
+    padding: 40px;
+    margin-bottom: 10px;
+    border-radius: 15px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: white;
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.item:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(233, 75, 75, 0.3);
+}
+
+.item-left {
+    flex: 1;
+}
+
+.title {
+    font-size: 22px;
+    font-family: 'Futura', sans-serif;
+    font-weight: bold;
+    margin-bottom: 16px;
+    color: white;
+}
+
+.info {
+    font-size: 24px;
+    font-family: 'Futura', sans-serif;
+    color: white;
+}
+
+.item-right {
+    background: white;
+    padding: 20px;
+    border-radius: 10px;
+    text-align: center;
+    min-width: 140px;
+}
+
+.distance {
+    color: #666;
+    font-size: 24px;
+    font-family: 'Futura', sans-serif;
+    margin-bottom: 8px;
+}
+
+.from-text {
+    color: #999;
+    font-size: 28px;
+    font-family: 'Futura', sans-serif;
+}
+
+/* 调试信息样式 */
+.debug-info {
+    padding: 20px 0;
+    text-align: left;
+    font-family: monospace;
+    font-size: 12px;
+    color: #666;
+    margin-bottom: 20px;
+    padding-left: 32px;
+    padding-right: 32px;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .welcome-text {
+        font-size: 28px;
+    }
+    
+    .sub-text {
+        font-size: 24px;
+    }
+    
+    .title {
+        font-size: 24px;
+    }
+    
+    .info {
+        font-size: 20px;
+    }
+    
+    .distance {
+        font-size: 20px;
+    }
+    
+    .from-text {
+        font-size: 18px;
+    }
+    
+    .item {
+        padding: 10px;
+    }
+    
+    .item-right {
+        padding: 10px;
+        min-width: 100px;
+    }
+} 
