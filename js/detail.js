@@ -8,7 +8,7 @@ class DetailPage {
         this.audioManager = null;
         this.isPlaying = false;
         this.progress = 0;
-        this.buttonText = 'download audio and start tracking';
+        this.buttonText = 'start tracking and playing';
         this.isLoading = true;
         this.audioRecords = [];
         this.isTracking = false;
@@ -465,18 +465,20 @@ class DetailPage {
 
         // 更新按钮文本，显示播放数量
         const playCount = this.playingRecords.size;
-        if (playCount > 0) {
-            this.buttonText = `stop tracking (${playCount} 音频播放中)`;
+        if (playCount == 1){
+            this.buttonText = `stop tracking\n「 playing ${playCount} track 」`;
+        } else if (playCount > 1){
+            this.buttonText = `stop tracking\n「 playing ${playCount} tracks 」`;
         } else if (this.isTracking) {
             this.buttonText = 'stop tracking';
         } else {
-            this.buttonText = 'download audio and start tracking';
+            this.buttonText = 'start tracking and playing';
         }
 
         // 更新按钮状态
         const buttonText = document.getElementById('button-text');
         if (buttonText) {
-            buttonText.textContent = this.buttonText;
+            buttonText.innerHTML = this.buttonText.replace(/\n/g, '<br>');
         }
 
         // 更新加载状态
@@ -702,7 +704,7 @@ class DetailPage {
 
     stopTracking() {
         this.isTracking = false;
-        this.buttonText = 'download audio and start tracking';
+        this.buttonText = 'start tracking and playing';
         this.progress = 0;
         
         // 停止所有音频播放

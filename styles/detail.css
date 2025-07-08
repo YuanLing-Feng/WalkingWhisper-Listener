@@ -1,6 +1,6 @@
 /* 详情页样式 */
 #detail-page {
-    padding: 80px 40px;
+    padding: 80px 20px;
     background-color: #fff1f2;
     width: 100%;
     min-height: 100vh;
@@ -20,7 +20,7 @@
 }
 
 .work-title {
-    font-size: 68.7px;
+    font-size: 68px;
     font-family: 'Futura', sans-serif;
     line-height: 60.21px;
     font-style: italic;
@@ -28,25 +28,25 @@
 }
 
 .info-text {
-    font-size: 45.8px;
+    font-size: 45px;
     font-family: 'Futura', sans-serif;
     color: #4b4b4b;
     font-style: italic;
-    margin-top: 24.81px;
+    margin-top: 10px;
 }
 
 .author-name {
-    margin-right: 2.82px;
-    line-height: 40.15px;
+    margin-right: 2px;
+    line-height: 40px;
 }
 
 .creation-time {
-    line-height: 35.9px;
+    line-height: 36px;
 }
 
 /* 2. 地图部分 */
 .map-section {
-    margin-top: 58.49px;
+    margin-top: 30px;
     width: 100%;
 }
 
@@ -54,7 +54,7 @@
     padding: 0;
     background-color: #fff1f1;
     border-radius: 11.45px;
-    border: solid 1.91px #f12a2e;
+    border: solid 2px #f12a2e;
     position: relative;
     height: 400px;
     width: 100%;
@@ -85,7 +85,7 @@
 
 /* 3. 简介部分 */
 .intro-section {
-    margin: 20.59px 0 0 0;
+    margin: 10px 0 0 0;
     width: 100%;
     max-height: 200px;
     overflow-y: auto;
@@ -94,9 +94,9 @@
 
 .intro-text {
     color: rgb(82, 82, 82);
-    font-size: 32px;
+    font-size: 24px;
     font-family: 'Inter', sans-serif;
-    line-height: 45.8px;
+    line-height: 46px;
     display: block;
 }
 
@@ -105,9 +105,9 @@
     margin-top: 50px;
     padding: 25px 20px 25px 25px;
     background-color: #f12a2e;
-    border-radius: 15.27px;
+    border-radius: 15px;
     width: 90%;
-    max-width: 395.04px;
+    max-width: 395px;
     align-self: center;
     position: relative;
     overflow: hidden;
@@ -145,15 +145,17 @@
 .button-text {
     margin: 0;
     color: #ffffff;
-    font-size: 38.17px;
+    font-size: 38px;
     font-family: 'Outfit', sans-serif;
     font-weight: bold;
-    line-height: 1;
+    line-height: 1.2;
     position: relative;
     z-index: 2;
     width: 100%;
     text-align: center;
     display: block;
+    white-space: normal;
+    word-wrap: break-word;
 }
 
 /* 返回按钮 */
@@ -185,16 +187,16 @@
 /* 响应式设计 */
 @media (max-width: 768px) {
     .page {
-        padding: 60px 20px;
+        padding: 60px 10px;
     }
     
     .work-title {
-        font-size: 48px;
+        font-size: 42px;
         line-height: 42px;
     }
     
     .info-text {
-        font-size: 32px;
+        font-size: 28px;
     }
     
     .map-container {
@@ -206,12 +208,15 @@
     }
     
     .intro-text {
-        font-size: 26px;
+        font-size: 18px;
         line-height: 36px;
     }
     
     .button-text {
         font-size: 28px;
+        line-height: 1.2;
+        white-space: normal;
+        word-wrap: break-word;
     }
     
     .loading-text {
