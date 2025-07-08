@@ -368,6 +368,9 @@ class DetailPage {
             this.audioLoadingStates.set(recordId, 'error');
             this.playingRecords.delete(recordId);
             this.audioPlayers.delete(recordId);
+            
+            // 移除错误提示，静默失败
+            // window.app.showToast(`音频播放失败: ${error.message || '未知错误'}`);
         } finally {
             // 清理Promise引用
             this.audioPlayPromises.delete(recordId);
@@ -386,8 +389,8 @@ class DetailPage {
             
             // 创建新的音频元素
             const audioElement = document.createElement('audio');
-            audioElement.preload = 'auto';
-            audioElement.crossOrigin = 'anonymous'; // 添加跨域支持
+            audioElement.preload = 'metadata'; // 只预加载元数据，不预加载整个文件
+            audioElement.crossOrigin = 'anonymous';
             
             // 设置音频属性
             audioElement.volume = 1.0;
@@ -400,35 +403,6 @@ class DetailPage {
                 audioElement.src = downloadUrl;
                 this.audioCache.set(recordId, downloadUrl);
             }
-            
-            // 等待音频加载完成
-            await new Promise((resolve, reject) => {
-                const timeout = setTimeout(() => {
-                    reject(new Error(`音频 ${recordId} 加载超时`));
-                }, 10000); // 10秒超时
-                
-                const handleCanPlay = () => {
-                    clearTimeout(timeout);
-                    audioElement.removeEventListener('canplay', handleCanPlay);
-                    audioElement.removeEventListener('error', handleError);
-                    resolve();
-                };
-                
-                const handleError = (error) => {
-                    clearTimeout(timeout);
-                    audioElement.removeEventListener('canplay', handleCanPlay);
-                    audioElement.removeEventListener('error', handleError);
-                    reject(new Error(`音频 ${recordId} 加载失败: ${error.message || '未知错误'}`));
-                };
-                
-                audioElement.addEventListener('canplay', handleCanPlay);
-                audioElement.addEventListener('error', handleError);
-                
-                // 如果音频已经可以播放，立即解析
-                if (audioElement.readyState >= 2) {
-                    handleCanPlay();
-                }
-            });
             
             // 设置播放范围
             if (record.start_time && record.end_time) {
@@ -465,8 +439,42 @@ class DetailPage {
                 this.stopSpecificAudio(recordId);
             });
             
-            // 开始播放
-            await audioElement.play();
+            // 直接尝试播放，不等待完全加载
+            try {
+                await audioElement.play();
+            } catch (playError) {
+                // 如果直接播放失败，尝试等待加载后播放
+                console.log(`直接播放失败，等待加载后重试: ${recordId}`);
+                
+                await new Promise((resolve, reject) => {
+                    const timeout = setTimeout(() => {
+                        reject(new Error(`音频 ${recordId} 加载超时`));
+                    }, 15000); // 增加到15秒超时
+                    
+                    const handleCanPlay = async () => {
+                        clearTimeout(timeout);
+                        audioElement.removeEventListener('canplay', handleCanPlay);
+                        audioElement.removeEventListener('error', handleError);
+                        
+                        try {
+                            await audioElement.play();
+                            resolve();
+                        } catch (error) {
+                            reject(error);
+                        }
+                    };
+                    
+                    const handleError = (error) => {
+                        clearTimeout(timeout);
+                        audioElement.removeEventListener('canplay', handleCanPlay);
+                        audioElement.removeEventListener('error', handleError);
+                        reject(new Error(`音频 ${recordId} 加载失败: ${error.message || '未知错误'}`));
+                    };
+                    
+                    audioElement.addEventListener('canplay', handleCanPlay);
+                    audioElement.addEventListener('error', handleError);
+                });
+            }
             
             // 设置加载完成状态
             this.audioLoadingStates.set(recordId, 'loaded');
@@ -490,8 +498,8 @@ class DetailPage {
                 this._cleanupAudioElement(audioElement, recordId);
             }
             
-            // 显示错误提示
-            window.app.showToast(`音频播放失败: ${error.message || '未知错误'}`);
+            // 移除错误提示，静默失败
+            // window.app.showToast(`音频播放失败: ${error.message || '未知错误'}`);
             throw error;
         }
     }
@@ -834,21 +842,21 @@ class DetailPage {
         this.buttonText = 'stop tracking';
         this.updateUI();
         
-        console.log('Tracking started, isTracking:', this.isTracking);
+        // console.log('Tracking started, isTracking:', this.isTracking);
         window.app.showToast('开始追踪，请移动到音频点附近');
         
         // 立即检查当前位置
         const currentLocation = window.app.globalData.currentLocation;
         if (currentLocation) {
-            console.log('Immediately checking current location for tracking');
+            // console.log('Immediately checking current location for tracking');
             this.checkProximityToMarkers(currentLocation);
         } else {
-            console.log('No current location available for immediate check');
+            // console.log('No current location available for immediate check');
         }
     }
 
     stopTracking() {
-        console.log('停止追踪');
+        // console.log('停止追踪');
         this.isTracking = false;
         this.buttonText = 'start tracking and playing';
         this.progress = 0;
@@ -873,7 +881,7 @@ class DetailPage {
     }
 
     goBack() {
-        console.log('返回首页，清理资源');
+        // console.log('返回首页，清理资源');
         
         // 停止追踪
         if (this.isTracking) {
@@ -909,11 +917,11 @@ class DetailPage {
     onLocationUpdate(location) {
         if (!location) return;
         
-        console.log('Location update received, isTracking:', this.isTracking, 'location:', location);
+        // console.log('Location update received, isTracking:', this.isTracking, 'location:', location);
         
         // 如果页面还没有初始化，先进行完整初始化
         if (!this.map && !this.isInitializing) {
-            console.log('Page not initialized yet, performing full initialization with location');
+            // console.log('Page not initialized yet, performing full initialization with location');
             this.isInitializing = true; // 设置初始化标志
             // 从URL参数获取userName
             const urlParams = new URLSearchParams(window.location.search);
@@ -928,9 +936,10 @@ class DetailPage {
         // 如果正在追踪，使用防抖机制进行距离检测
         if (this.isTracking) {
             this.debouncedProximityCheck(location);
-        } else {
-            console.log('Tracking is not active, skipping proximity check');
-        }
+        } 
+        // else {
+        //     // console.log('Tracking is not active, skipping proximity check');
+        // }
     }
 
     // 防抖的位置检查
@@ -958,11 +967,11 @@ class DetailPage {
     // 更新用户位置标记
     updateUserMarker(location) {
         if (!this.map) {
-            console.log('Map not available for user marker update');
+            // console.log('Map not available for user marker update');
             return;
         }
         
-        console.log('Updating user marker with location:', location);
+        // console.log('Updating user marker with location:', location);
         
         // 移除旧的用户标记
         if (this.userMarker) {
@@ -988,7 +997,7 @@ class DetailPage {
             userTooltipContent.style.cssText = 'font-weight: bold; color: #4CAF50;';
             
             this.userMarker.bindTooltip(userTooltipContent, {permanent: true, direction: 'right'});
-            console.log('User marker updated successfully');
+            // console.log('User marker updated successfully');
         } catch (error) {
             console.error('更新用户位置标记失败:', error);
         }
@@ -1016,20 +1025,20 @@ class DetailPage {
     async checkProximityToMarkers(userLocation) {
         // 如果不在追踪状态，直接返回
         if (!this.isTracking) {
-            console.log('不在追踪状态，跳过位置检查');
+            // console.log('不在追踪状态，跳过位置检查');
             return;
         }
         
-        console.log('Starting proximity check for location:', userLocation);
+        // console.log('Starting proximity check for location:', userLocation);
         const storedData = this.getDataFromLocalStorage(this.userId);
         if (!storedData || !storedData.locations) {
-            console.log('No stored data available for proximity check');
+            // console.log('No stored data available for proximity check');
             return;
         }
-        console.log('Found', storedData.locations.length, 'locations in stored data');
+        // console.log('Found', storedData.locations.length, 'locations in stored data');
         
         const nearby = this.findNearbyMarkers(userLocation, 100);
-        console.log('Found', nearby.length, 'nearby markers within 100m');
+        // console.log('Found', nearby.length, 'nearby markers within 100m');
         
         const playableRecords = [];
         
@@ -1038,23 +1047,23 @@ class DetailPage {
             const key = `${marker.latitude}_${marker.longitude}`;
             const audioData = storedData.records[key];
             if (!audioData || !audioData.records.length) {
-                console.log('No audio data for marker:', key);
+                // console.log('No audio data for marker:', key);
                 continue;
             }
-            console.log('Checking', audioData.records.length, 'records for marker:', key);
+            // console.log('Checking', audioData.records.length, 'records for marker:', key);
             
             // 检查每条record
             for (const record of audioData.records) {
                 if (!record.isPlay) {
-                    console.log('Record', record.record_id, 'is not playable');
+                    // console.log('Record', record.record_id, 'is not playable');
                     continue;
                 }
                 const outerRadius = record.outer_radius;
                 const innerRadius = record.inner_radius;
-                console.log('checking play state', record.record_id, distance, outerRadius, innerRadius);
+                // console.log('checking play state', record.record_id, distance, outerRadius, innerRadius);
                 if (distance <= outerRadius && distance >= innerRadius) {
                     playableRecords.push({ record, distance, idx });
-                    console.log(`音频点${idx + 1}在播放范围内，距离: ${distance}m，record:`, record.record_id);
+                    // console.log(`音频点${idx + 1}在播放范围内，距离: ${distance}m，record:`, record.record_id);
                 }
             }
         }
@@ -1063,20 +1072,25 @@ class DetailPage {
         const playPromises = [];
         for (const { record } of playableRecords) {
             try {
-                const playPromise = this.playAudio(record, this.userId);
+                const playPromise = this.playAudio(record, this.userId).catch(error => {
+                    console.warn(`音频 ${record.record_id} 播放失败，跳过:`, error);
+                    // 静默处理单个音频的失败
+                });
                 playPromises.push(playPromise);
             } catch (error) {
-                console.error(`播放音频 ${record.record_id} 失败:`, error);
+                console.error(`准备播放音频 ${record.record_id} 失败:`, error);
             }
         }
         
-        // 等待所有播放操作完成
+        // 等待所有播放操作完成，但不阻塞
         if (playPromises.length > 0) {
-            try {
-                await Promise.allSettled(playPromises);
-            } catch (error) {
-                console.warn('部分音频播放失败:', error);
-            }
+            Promise.allSettled(playPromises).then(results => {
+                const successCount = results.filter(r => r.status === 'fulfilled').length;
+                const failCount = results.filter(r => r.status === 'rejected').length;
+                if (failCount > 0) {
+                    console.log(`音频播放结果: ${successCount} 成功, ${failCount} 失败`);
+                }
+            });
         }
         
         // 停止不在范围内的音频
@@ -1089,7 +1103,7 @@ class DetailPage {
             }
         }
         
-        console.log(`位置检查完成，当前播放 ${this.playingRecords.size} 个音频`);
+        // console.log(`位置检查完成，当前播放 ${this.playingRecords.size} 个音频`);
     }
 }
 
@@ -1106,7 +1120,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (id && userId && userName) {
         window.detailPage.init(id, userId, userName);
     } else {
-        console.error('Missing required parameters');
+        // console.error('Missing required parameters');
         window.app.showToast('参数错误');
         // 如果没有必要参数，返回首页
         setTimeout(() => {

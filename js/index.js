@@ -11,11 +11,11 @@ class IndexPage {
     }
 
     init() {
-        console.log('Index page onLoad');
+        // console.log('Index page onLoad');
         
         // 设置位置更新回调
         window.app.setLocationCallback((location) => {
-            console.log('Index page location callback triggered:', location);
+            // console.log('Index page location callback triggered:', location);
             this.currentLocation = location;
             
             // 如果已经有作品列表，更新距离
@@ -31,18 +31,18 @@ class IndexPage {
     }
 
     initData() {
-        console.log('Initializing data...');
+        // console.log('Initializing data...');
         this.isLoading = true;
         this.updateLoadingState();
         
         const currentLocation = window.app.globalData.currentLocation;
-        console.log('Current location from app:', currentLocation);
+        // console.log('Current location from app:', currentLocation);
         
         if (currentLocation && window.app.globalData.isLocationInitialized) {
             this.currentLocation = currentLocation;
             this.fetchWorkList(currentLocation);
         } else {
-            console.log('No location available yet, waiting for location callback...');
+            // console.log('No location available yet, waiting for location callback...');
             this.isLoading = false;
             this.updateLoadingState();
             this.updateDebugInfo('等待位置信息...');
@@ -84,7 +84,7 @@ class IndexPage {
     }
 
     async fetchWorkList(location) {
-        console.log('Fetching worklist for location:', location);
+        // console.log('Fetching worklist for location:', location);
         const url = `https://nyw6vsud2p.ap-northeast-1.awsapprunner.com/api/v1/get/worklist?latitude=${location.latitude}&longitude=${location.longitude}&radius=3`;
         console.log('Request URL:', url);
         
@@ -109,8 +109,8 @@ class IndexPage {
                     this.userIdCache[workId] = work.user_id;
                     this.userNameCache[workId] = work.user_name || work.username || work.user_id;
                     
-                    console.log(`Cached user_id for work ${workId}:`, work.user_id);
-                    console.log(`Cached user_name for work ${workId}:`, this.userNameCache[workId]);
+                    // console.log(`Cached user_id for work ${workId}:`, work.user_id);
+                    // console.log(`Cached user_name for work ${workId}:`, this.userNameCache[workId]);
                     
                     return {
                         id: workId,
