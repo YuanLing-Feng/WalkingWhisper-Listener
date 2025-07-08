@@ -611,9 +611,9 @@ class DetailPage {
         // 更新按钮文本，显示播放数量
         const playCount = this.playingRecords.size;
         if (playCount == 1){
-            this.buttonText = `stop tracking\n「 playing ${playCount} track 」`;
+            this.buttonText = `stop tracking\nplaying ${playCount} track`;
         } else if (playCount > 1){
-            this.buttonText = `stop tracking\n「 playing ${playCount} tracks 」`;
+            this.buttonText = `stop tracking\nplaying ${playCount} tracks`;
         } else if (this.isTracking) {
             this.buttonText = 'stop tracking';
         } else {
