@@ -441,18 +441,31 @@ class DetailPage {
             
             const downloadUrl = `https://nyw6vsud2p.ap-northeast-1.awsapprunner.com/api/v1/edit/downloadCreatedAudio?user_id=${userId}&record_id=${recordId}`;
             
-            // 创建新的音频元素
-            const audioElement = document.createElement('audio');
-            audioElement.preload = 'metadata'; // 只预加载元数据，不预加载整个文件
-            audioElement.crossOrigin = 'anonymous';
-            
-            // 设置音频属性
-            audioElement.volume = 1.0;
-            audioElement.loop = record.isLoop || false;
-            
-            // 针对移动端的自动播放优化
-            audioElement.muted = false;
-            audioElement.autoplay = false; // 不设置autoplay，手动控制播放
+            // 检查是否已有音频元素，如果有且可以复用则复用
+            let audioElement = this.audioPlayers.get(recordId);
+            if (audioElement && audioElement.readyState >= 2 && !audioElement.paused) {
+                // 复用现有音频元素，如果正在播放则不需要重新播放
+                this.addDebugLog(`音频 ${recordId} 已在播放中，跳过重复播放`);
+                return;
+            } else if (audioElement && audioElement.readyState >= 2) {
+                // 复用现有音频元素，重新开始播放
+                this.addDebugLog(`复用现有音频元素: ${recordId}`);
+                audioElement.currentTime = record.start_time || 0;
+            } else {
+                // 创建新的音频元素
+                this.addDebugLog(`创建新音频元素: ${recordId}`);
+                audioElement = document.createElement('audio');
+                audioElement.preload = 'metadata'; // 只预加载元数据，不预加载整个文件
+                audioElement.crossOrigin = 'anonymous';
+                
+                // 设置音频属性
+                audioElement.volume = 1.0;
+                audioElement.loop = record.isLoop || false;
+                
+                // 针对移动端的自动播放优化
+                audioElement.muted = false;
+                audioElement.autoplay = false; // 不设置autoplay，手动控制播放
+            }
             
             // 检查缓存
             if (this.audioCache.has(recordId)) {
@@ -547,6 +560,12 @@ class DetailPage {
             this.playingRecords.add(recordId);
             this.isPlaying = true;
             
+            // 更新最后使用时间
+            audioElement._lastUsed = Date.now();
+            
+            // 清理过期的音频元素
+            this._cleanupExpiredAudioElements();
+            
             this.updateUI();
             
 
@@ -555,11 +574,8 @@ class DetailPage {
             this.addDebugLog(`音频 ${recordId} 播放失败: ${error.message}`);
             this.audioLoadingStates.set(recordId, 'error');
             
-            // 清理可能创建的音频元素
-            const audioElement = this.audioPlayers.get(recordId);
-            if (audioElement) {
-                this._cleanupAudioElement(audioElement, recordId);
-            }
+            // 强制重新创建音频元素，解决移动端播放问题
+            this._forceRecreateAudioElement(recordId);
             
             // 移除错误提示，静默失败
             // window.app.showToast(`音频播放失败: ${error.message || '未知错误'}`);
@@ -591,6 +607,39 @@ class DetailPage {
         }
     }
 
+    // 清理过期的音频元素，避免内存泄漏
+    _cleanupExpiredAudioElements() {
+        const maxCachedElements = 10; // 最多保留10个音频元素
+        const audioPlayerEntries = Array.from(this.audioPlayers.entries());
+        
+        if (audioPlayerEntries.length > maxCachedElements) {
+            // 按最后使用时间排序，移除最旧的
+            const sortedEntries = audioPlayerEntries.sort((a, b) => {
+                const aLastUsed = a[1]._lastUsed || 0;
+                const bLastUsed = b[1]._lastUsed || 0;
+                return aLastUsed - bLastUsed;
+            });
+            
+            // 移除多余的音频元素
+            const toRemove = sortedEntries.slice(0, audioPlayerEntries.length - maxCachedElements);
+            for (const [recordId, audioElement] of toRemove) {
+                this.addDebugLog(`清理过期音频元素: ${recordId}`);
+                this._cleanupAudioElement(audioElement, recordId);
+                this.audioPlayers.delete(recordId);
+            }
+        }
+    }
+
+    // 强制重新创建音频元素，解决移动端播放问题
+    _forceRecreateAudioElement(recordId) {
+        const audioElement = this.audioPlayers.get(recordId);
+        if (audioElement) {
+            this.addDebugLog(`强制重新创建音频元素: ${recordId}`);
+            this._cleanupAudioElement(audioElement, recordId);
+            this.audioPlayers.delete(recordId);
+        }
+    }
+
     // 停止特定音频播放
     stopSpecificAudio(recordId) {
         if (!recordId) return;
@@ -612,18 +661,22 @@ class DetailPage {
         const audioElement = this.audioPlayers.get(recordId);
         if (audioElement) {
             try {
-                // 使用辅助方法清理音频元素
-                this._cleanupAudioElement(audioElement, recordId);
+                // 只暂停音频，不清理元素，以便复用
+                audioElement.pause();
+                audioElement.currentTime = 0;
                 
-                // 从管理器中移除
-                this.audioPlayers.delete(recordId);
+                // 从播放记录中移除，但保留音频元素
                 this.playingRecords.delete(recordId);
                 
-
+                // 更新最后使用时间
+                audioElement._lastUsed = Date.now();
+                
+                this.addDebugLog(`音频 ${recordId} 已暂停，保留元素以便复用`);
                 
             } catch (error) {
                 console.error(`停止音频 ${recordId} 时出错:`, error);
-                // 即使出错也要从管理器中移除
+                // 如果出错，完全清理音频元素
+                this._cleanupAudioElement(audioElement, recordId);
                 this.audioPlayers.delete(recordId);
                 this.playingRecords.delete(recordId);
             }
@@ -658,11 +711,12 @@ class DetailPage {
             }
         });
         
-        // 确保状态重置
+        // 确保状态重置，但保留音频元素以便复用
         this.isPlaying = false;
         this.playingRecords.clear();
-        this.audioPlayers.clear();
+        // 不清理 audioPlayers，保留音频元素以便复用
         
+        this.addDebugLog('所有音频已停止，保留音频元素以便复用');
         this.updateUI();
     }
 
@@ -744,6 +798,11 @@ class DetailPage {
         
         // 立即更新调试信息
         this.updateDebugInfo();
+        
+        // Safari兼容：强制DOM更新
+        setTimeout(() => {
+            this.updateDebugInfo();
+        }, 0);
     }
 
     // 更新调试信息
@@ -778,33 +837,36 @@ class DetailPage {
         if (this.debugLogs.length > 0) {
             debugHTML += '<div class="debug-item debug-logs">调试日志:</div>';
             this.debugLogs.forEach(log => {
-                debugHTML += `<div class="debug-item debug-log">${log}</div>`;
+                debugHTML += '<div class="debug-item debug-log">' + log + '</div>';
             });
             debugHTML += '<div class="debug-item debug-separator">---</div>';
         }
         
         // 添加用户交互状态
-        debugHTML += `<div class="debug-item">用户交互: ${this.hasUserInteracted ? '✓' : '✗'}</div>`;
-        debugHTML += `<div class="debug-item">追踪状态: ${this.isTracking ? '开启' : '关闭'}</div>`;
+        debugHTML += '<div class="debug-item">用户交互: ' + (this.hasUserInteracted ? '✓' : '✗') + '</div>';
+        debugHTML += '<div class="debug-item">追踪状态: ' + (this.isTracking ? '开启' : '关闭') + '</div>';
         
         nearby.forEach(({ marker, distance, idx }) => {
             const key = `${marker.latitude}_${marker.longitude}`;
             const audioData = storedData.records[key];
             const hasAudio = audioData && audioData.records && audioData.records.length > 0;
             
-            debugHTML += `
-                <div class="debug-item distance">
-                    点${idx + 1}: ${distance.toFixed(1)}m ${hasAudio ? '✓' : '✗'}
-                </div>
-            `;
+            debugHTML += '<div class="debug-item distance">点' + (idx + 1) + ': ' + distance.toFixed(1) + 'm ' + (hasAudio ? '✓' : '✗') + '</div>';
         });
 
         // 添加当前播放状态
         if (this.playingRecords.size > 0) {
-            debugHTML += `<div class="debug-item">正在播放: ${this.playingRecords.size} 个音频</div>`;
+            debugHTML += '<div class="debug-item">正在播放: ' + this.playingRecords.size + ' 个音频</div>';
         }
 
         debugContent.innerHTML = debugHTML;
+        
+        // Safari兼容：强制重新计算布局
+        if (debugContent.offsetHeight) {
+            debugContent.style.display = 'none';
+            debugContent.offsetHeight; // 触发重排
+            debugContent.style.display = 'flex';
+        }
     }
 
     initMap(currentLocation, locations) {

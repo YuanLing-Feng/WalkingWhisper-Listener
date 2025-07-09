@@ -192,10 +192,50 @@
     line-height: 1.4;
     padding: 3px 0;
     border-bottom: 1px solid #e9ecef;
+    word-wrap: break-word;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    -webkit-word-wrap: break-word;
+    -webkit-word-break: break-word;
 }
 
 .debug-item:last-child {
     border-bottom: none;
+}
+
+/* Safari兼容的调试日志样式 */
+.debug-logs {
+    font-weight: bold;
+    color: #495057;
+    background-color: #e9ecef;
+    padding: 5px;
+    border-radius: 3px;
+    margin-bottom: 5px;
+}
+
+.debug-log {
+    font-size: 12px;
+    color: #495057;
+    background-color: #f8f9fa;
+    padding: 4px 6px;
+    border-radius: 3px;
+    margin: 2px 0;
+    border-left: 3px solid #007bff;
+    font-family: 'Courier New', monospace;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    word-break: break-all;
+    overflow-wrap: break-word;
+    -webkit-word-wrap: break-word;
+    -webkit-word-break: break-all;
+}
+
+.debug-separator {
+    text-align: center;
+    color: #adb5bd;
+    font-weight: bold;
+    border-bottom: 2px solid #dee2e6;
+    margin: 5px 0;
 }
 
 .debug-item.distance {
