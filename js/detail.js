@@ -21,6 +21,11 @@ class DetailPage {
         this.storedData = null; // 存储的数据
         this.isInitializing = false; // 防止重复初始化的标志
         
+        // 移动设备检测
+        this.isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        this.isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+        this.isSafari = /Safari/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent);
+        
         // 多音频播放管理
         this.audioPlayers = new Map(); // 存储所有音频播放器 {record_id: audioElement}
         this.playingRecords = new Set(); // 当前正在播放的record_id集合
@@ -412,14 +417,18 @@ class DetailPage {
             const downloadUrl = `https://nyw6vsud2p.ap-northeast-1.awsapprunner.com/api/v1/edit/downloadCreatedAudio?user_id=${userId}&record_id=${recordId}`;
             
             // 创建新的音频元素
-            this.addDebugLog(`创建新音频元素: ${recordId}`);
+            this.addDebugLog(`创建新音频元素: ${recordId} (移动设备: ${this.isMobile}, iOS: ${this.isIOS}, Safari: ${this.isSafari})`);
             const audioElement = document.createElement('audio');
-            audioElement.preload = 'metadata';
+            audioElement.preload = this.isMobile ? 'auto' : 'metadata'; // 移动设备预加载更多数据
             audioElement.crossOrigin = 'anonymous';
             audioElement.volume = 1.0;
             audioElement.loop = record.isLoop || false;
             audioElement.muted = false;
             audioElement.autoplay = false;
+            
+            // 移动设备兼容性：将音频元素添加到DOM
+            audioElement.style.display = 'none';
+            document.body.appendChild(audioElement);
             
             // 设置音频源
             audioElement.src = downloadUrl;
@@ -450,6 +459,19 @@ class DetailPage {
                 this.stopSpecificAudio(recordId);
             });
             
+            // 音频加载进度监听
+            audioElement.addEventListener('loadstart', () => {
+                this.addDebugLog(`音频 ${recordId} 开始加载`);
+            });
+            
+            audioElement.addEventListener('progress', () => {
+                this.addDebugLog(`音频 ${recordId} 加载进度: ${audioElement.buffered.length > 0 ? Math.round(audioElement.buffered.end(0)) : 0}s`);
+            });
+            
+            audioElement.addEventListener('canplaythrough', () => {
+                this.addDebugLog(`音频 ${recordId} 可以完整播放`);
+            });
+            
             // 音频错误处理
             audioElement.addEventListener('error', (error) => {
                 console.error(`音频 ${recordId} 播放错误:`, error);
@@ -459,14 +481,16 @@ class DetailPage {
             
             // 等待音频加载到可以播放的状态
             await new Promise((resolve, reject) => {
+                const timeoutDuration = this.isMobile ? 15000 : 10000; // 移动设备给更长时间
                 const timeout = setTimeout(() => {
-                    reject(new Error(`音频 ${recordId} 加载超时 (10秒)`));
-                }, 10000);
+                    reject(new Error(`音频 ${recordId} 加载超时 (${timeoutDuration/1000}秒)`));
+                }, timeoutDuration);
                 
                 const handleCanPlay = () => {
                     clearTimeout(timeout);
                     audioElement.removeEventListener('canplay', handleCanPlay);
                     audioElement.removeEventListener('error', handleError);
+                    this.addDebugLog(`音频 ${recordId} canplay事件触发，readyState: ${audioElement.readyState}`, 'success');
                     resolve();
                 };
                 
@@ -490,8 +514,21 @@ class DetailPage {
             
             this.addDebugLog(`音频 ${recordId} 加载完成，准备播放`);
             
-            // 尝试播放
-            await audioElement.play();
+            // 移动设备兼容性：尝试播放
+            try {
+                await audioElement.play();
+            } catch (playError) {
+                // 如果是移动设备播放失败，尝试静音播放然后取消静音
+                if (playError.name === 'NotAllowedError' || playError.name === 'NotSupportedError') {
+                    this.addDebugLog(`移动设备播放失败，尝试静音播放策略: ${recordId}`);
+                    audioElement.muted = true;
+                    await audioElement.play();
+                    audioElement.muted = false;
+                    this.addDebugLog(`移动设备静音播放成功，已取消静音: ${recordId}`);
+                } else {
+                    throw playError;
+                }
+            }
             this.addDebugLog(`音频 ${recordId} 播放成功`, 'success');
             
             // 设置加载完成状态
@@ -543,6 +580,8 @@ class DetailPage {
                 // 从DOM中移除
                 if (audioElement.parentNode) {
                     audioElement.parentNode.removeChild(audioElement);
+                } else if (document.body.contains(audioElement)) {
+                    document.body.removeChild(audioElement);
                 }
                 
                 // 从播放记录中移除
@@ -741,6 +780,7 @@ class DetailPage {
         
         // 添加用户交互状态
         debugHTML += '<div class="debug-item">用户交互: ✓</div>';
+        debugHTML += '<div class="debug-item">设备信息: ' + (this.isMobile ? '移动设备' : '桌面设备') + (this.isIOS ? ' (iOS)' : '') + (this.isSafari ? ' (Safari)' : '') + '</div>';
         debugHTML += '<div class="debug-item">追踪状态: ' + (this.isTracking ? '开启' : '关闭') + '</div>';
         
         nearby.forEach(({ marker, distance, idx }) => {
