@@ -206,7 +206,7 @@ class DetailPage {
         
         try {
             const res = await window.utils.request(url);
-            console.log('LocationMarkers API Response:', res);
+            // console.log('LocationMarkers API Response:', res);
 
             if (res.code === 200 && res.data && res.data.markers) {
                 return {
@@ -240,7 +240,7 @@ class DetailPage {
                 const res = await window.utils.request(url);
                 
                 if (res.code === 200 && res.data.length > 0) {
-                    console.log('API response for marker:', marker.latitude, marker.longitude, 'data:', res.data);
+                    // console.log('API response for marker:', marker.latitude, marker.longitude, 'data:', res.data);
                     // 只保存isPlay为true的音频记录，并提取play_range中的参数
                     const records = res.data.filter(record => record.isPlay).map(record => {
                         // 从play_range中提取outer_radius和inner_radius
@@ -1006,11 +1006,8 @@ class DetailPage {
     onLocationUpdate(location) {
         if (!location) return;
         
-        // console.log('Location update received, isTracking:', this.isTracking, 'location:', location);
-        
         // 如果页面还没有初始化，先进行完整初始化
         if (!this.map && !this.isInitializing) {
-            // console.log('Page not initialized yet, performing full initialization with location');
             this.isInitializing = true; // 设置初始化标志
             // 从URL参数获取userName
             const urlParams = new URLSearchParams(window.location.search);
@@ -1025,13 +1022,10 @@ class DetailPage {
         // 更新调试信息
         this.updateDebugInfo();
         
-        // 如果正在追踪，使用防抖机制进行距离检测
+        // 如果正在追踪，立即执行一次位置检查，防止防抖导致首次不触发
         if (this.isTracking) {
-            this.debouncedProximityCheck(location);
-        } 
-        // else {
-        //     // console.log('Tracking is not active, skipping proximity check');
-        // }
+            this.checkProximityToMarkers(location);
+        }
     }
 
     // 防抖的位置检查
@@ -1257,28 +1251,24 @@ class DetailPage {
         this.audioRangeStates.set(recordId, currentState);
     }
 
-    // 检查音频是否应该停止播放（使用新状态管理）
+    // 检查音频是否应该停止播放（立即响应，无防抖）
     shouldStopAudio(recordId, playableRecords) {
         // 获取当前状态
         const currentState = this.audioRangeStates.get(recordId);
         if (!currentState) return true; // 如果没有状态记录，直接停止
-        
-        const now = Date.now();
-        
+
         // 检查是否在playableRecords中（当前检查在范围内）
         const isStillInRange = playableRecords.some(({ record }) => record.record_id === recordId);
-        
         if (isStillInRange) {
             // 在范围内，不停止播放
             return false;
         }
-        
+
         // 不在playableRecords中，检查是否真的在范围内
         const currentLocation = window.app.globalData.currentLocation;
         if (currentLocation) {
             const storedData = this.getDataFromLocalStorage(this.userId);
             if (storedData && storedData.locations) {
-                // 检查所有音频点，看这个音频是否真的在范围内
                 for (const location of storedData.locations) {
                     const key = `${location.latitude}_${location.longitude}`;
                     const audioData = storedData.records[key];
@@ -1296,24 +1286,8 @@ class DetailPage {
                 }
             }
         }
-        
-        // 确实不在范围内，开始防抖
-        if (currentState.inRange) {
-            // 重置状态为不在范围内
-            currentState.inRange = false;
-            currentState.lastCheckTime = now;
-            currentState.hasPlayedInRange = false; // 离开范围时重置播放状态
-            this.audioRangeStates.set(recordId, currentState);
-            return false; // 不立即停止，等待防抖
-        } else {
-            // 已经不在范围内，检查防抖时间
-            const timeSinceLastChange = now - currentState.lastCheckTime;
-            if (timeSinceLastChange >= this.rangeDebounceTime) {
-                return true;
-            } else {
-                return false;
-            }
-        }
+        // 只要不在范围内，立即停止
+        return true;
     }
 }
 
