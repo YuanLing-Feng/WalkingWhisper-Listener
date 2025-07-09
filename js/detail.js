@@ -16,7 +16,6 @@ class DetailPage {
         this.map = null;
         this.leafletMarkers = [];
         this.userMarker = null; // 用户位置标记
-        this.audioCache = new Map(); // 音频缓存
         this.currentPlayingRecord = null; // 当前播放的音频记录
         this.userId = null; // 用户ID
         this.storedData = null; // 存储的数据
@@ -27,28 +26,20 @@ class DetailPage {
         this.playingRecords = new Set(); // 当前正在播放的record_id集合
         this.audioLoadingStates = new Map(); // 音频加载状态 {record_id: 'loading'|'loaded'|'error'}
         this.audioPlayPromises = new Map(); // 防止重复播放的Promise {record_id: Promise}
-        this.audioPlayHistory = new Map(); // 音频播放历史 {record_id: {lastPlayTime, hasPlayedOnce}}
         
-        // 音频范围状态跟踪（重新设计）
+        // 音频范围状态跟踪
         this.audioRangeStates = new Map(); // 音频范围状态 {record_id: {inRange: boolean, lastCheckTime: number, hasPlayedInRange: boolean}}
-        this.rangeDebounceTime = 500; // 500ms防抖时间（小于GPS调用间隔）
         
         // 防抖机制
         this.proximityCheckTimeout = null;
         this.lastProximityCheck = 0;
         this.proximityCheckInterval = 1000; // 1秒间隔追踪距离变化
         
-        // 用户交互检测（用于移动端自动播放）
-        this.hasUserInteracted = false;
-        
         // 调试日志系统
         this.debugEnabled = false; // Debug功能开关
         this.debugLogs = []; // 存储格式化的日志字符串
         this.debugLogObjects = []; // 存储日志对象 {timestamp, message, type}
         this.maxDebugLogs = 10; // 最多显示10条日志
-        
-        // 音频重试机制
-        this.audioRetryCount = new Map(); // 音频重试计数 {record_id: retryCount}
         
         this.bindEvents();
     }
@@ -62,7 +53,6 @@ class DetailPage {
         const playButton = document.getElementById('play-button');
         if (playButton) {
             playButton.addEventListener('click', () => {
-                this.hasUserInteracted = true; // 标记用户已交互
                 this.handlePlayAudio();
             });
         }
@@ -71,21 +61,9 @@ class DetailPage {
         const backButton = document.getElementById('back-button');
         if (backButton) {
             backButton.addEventListener('click', () => {
-                this.hasUserInteracted = true; // 标记用户已交互
                 this.goBack();
             });
         }
-        
-        // 监听页面上的任何用户交互，用于移动端自动播放
-        document.addEventListener('touchstart', () => {
-            this.hasUserInteracted = true;
-            this.addDebugLog('用户触摸交互，允许自动播放');
-        }, { once: true });
-        
-        document.addEventListener('click', () => {
-            this.hasUserInteracted = true;
-            this.addDebugLog('用户点击交互，允许自动播放');
-        }, { once: true });
     }
 
     async init(id, userId, userName) {
@@ -387,24 +365,6 @@ class DetailPage {
             return;
         }
         
-        // 检查用户是否已交互（移动端自动播放限制）
-        if (!this.hasUserInteracted) {
-            this.addDebugLog(`用户未交互，跳过音频播放: ${recordId}`);
-            return;
-        }
-        
-        // 限制并发加载的音频数量，避免资源竞争
-        const maxConcurrentLoads = 3;
-        const currentLoads = this.audioPlayPromises.size;
-        if (currentLoads >= maxConcurrentLoads) {
-            this.addDebugLog(`并发加载数量已达上限 (${currentLoads}/${maxConcurrentLoads})，延迟播放: ${recordId}`, 'warning');
-            // 延迟一段时间后重试
-            setTimeout(() => {
-                this.playAudio(record, userId);
-            }, 1000);
-            return;
-        }
-        
         // 创建播放Promise来防止重复播放
         const playPromise = this._playAudioInternal(record, userId);
         this.audioPlayPromises.set(recordId, playPromise);
@@ -429,41 +389,12 @@ class DetailPage {
                 this.addDebugLog(`音频 ${recordId} 创建新状态并标记为已播放`);
             }
             
-            // 记录播放历史
-            this.audioPlayHistory.set(recordId, {
-                lastPlayTime: Date.now(),
-                hasPlayedOnce: true
-            });
-            
-            // 播放成功，清理重试计数
-            this.audioRetryCount.delete(recordId);
-            
         } catch (error) {
-            this.addDebugLog(`音频 ${recordId} 播放失败: ${error.message}`);
+            this.addDebugLog(`音频 ${recordId} 播放失败: ${error.message}`, 'error');
             // 清理错误状态
             this.audioLoadingStates.set(recordId, 'error');
             this.playingRecords.delete(recordId);
             this.audioPlayers.delete(recordId);
-            
-            // 自动重试机制（最多重试2次）
-            const retryCount = this.audioRetryCount.get(recordId) || 0;
-            if (retryCount < 2) {
-                this.audioRetryCount.set(recordId, retryCount + 1);
-                this.addDebugLog(`音频 ${recordId} 准备重试 (${retryCount + 1}/2)`, 'warning');
-                
-                // 延迟重试，避免立即重试
-                setTimeout(() => {
-                    this.playAudio(record, userId);
-                }, 2000 + retryCount * 1000); // 递增延迟
-                return;
-            } else {
-                // 重试次数用完，清理重试计数
-                this.audioRetryCount.delete(recordId);
-                this.addDebugLog(`音频 ${recordId} 重试次数已用完，放弃播放`, 'error');
-            }
-            
-            // 移除错误提示，静默失败
-            // window.app.showToast(`音频播放失败: ${error.message || '未知错误'}`);
         } finally {
             // 清理Promise引用
             this.audioPlayPromises.delete(recordId);
@@ -480,50 +411,18 @@ class DetailPage {
             
             const downloadUrl = `https://nyw6vsud2p.ap-northeast-1.awsapprunner.com/api/v1/edit/downloadCreatedAudio?user_id=${userId}&record_id=${recordId}`;
             
-            // 检查是否已有音频元素，如果有且可以复用则复用
-            let audioElement = this.audioPlayers.get(recordId);
-            if (audioElement && audioElement.readyState >= 2 && !audioElement.paused) {
-                // 复用现有音频元素，如果正在播放则不需要重新播放
-                this.addDebugLog(`音频 ${recordId} 已在播放中，跳过重复播放`);
-                return;
-            } else if (audioElement && audioElement.readyState >= 2) {
-                // 复用现有音频元素，重新开始播放
-                this.addDebugLog(`复用现有音频元素: ${recordId}`);
-                audioElement.currentTime = record.start_time || 0;
-            } else {
-                // 创建新的音频元素
-                this.addDebugLog(`创建新音频元素: ${recordId}`);
-                audioElement = document.createElement('audio');
-                audioElement.preload = 'metadata'; // 只预加载元数据，不预加载整个文件
-                audioElement.crossOrigin = 'anonymous';
-                
-                // 设置音频属性
-                audioElement.volume = 1.0;
-                audioElement.loop = record.isLoop || false;
-                
-                // 针对移动端的自动播放优化
-                audioElement.muted = false;
-                audioElement.autoplay = false; // 不设置autoplay，手动控制播放
-                
-                // 添加更多错误处理
-                audioElement.addEventListener('error', (error) => {
-                    this.addDebugLog(`音频 ${recordId} 加载错误: ${error.target.error?.message || '未知错误'}`);
-                    this.audioLoadingStates.set(recordId, 'error');
-                });
-                
-                audioElement.addEventListener('abort', () => {
-                    this.addDebugLog(`音频 ${recordId} 加载被中断`);
-                    this.audioLoadingStates.set(recordId, 'error');
-                });
-            }
+            // 创建新的音频元素
+            this.addDebugLog(`创建新音频元素: ${recordId}`);
+            const audioElement = document.createElement('audio');
+            audioElement.preload = 'metadata';
+            audioElement.crossOrigin = 'anonymous';
+            audioElement.volume = 1.0;
+            audioElement.loop = record.isLoop || false;
+            audioElement.muted = false;
+            audioElement.autoplay = false;
             
-            // 检查缓存
-            if (this.audioCache.has(recordId)) {
-                audioElement.src = this.audioCache.get(recordId);
-            } else {
-                audioElement.src = downloadUrl;
-                this.audioCache.set(recordId, downloadUrl);
-            }
+            // 设置音频源
+            audioElement.src = downloadUrl;
             
             // 设置播放范围
             if (record.start_time && record.end_time) {
@@ -537,16 +436,13 @@ class DetailPage {
                     }
                 };
                 
-                const loadedMetadataHandler = () => {
-                    audioElement.currentTime = record.start_time;
-                };
-                
                 audioElement.addEventListener('timeupdate', timeUpdateHandler);
-                audioElement.addEventListener('loadedmetadata', loadedMetadataHandler);
-                
-                // 存储事件处理器以便后续清理
                 audioElement._timeUpdateHandler = timeUpdateHandler;
-                audioElement._loadedMetadataHandler = loadedMetadataHandler;
+                
+                // 设置开始时间
+                audioElement.addEventListener('loadedmetadata', () => {
+                    audioElement.currentTime = record.start_time;
+                });
             }
             
             // 音频结束时的处理
@@ -561,79 +457,42 @@ class DetailPage {
                 this.stopSpecificAudio(recordId);
             });
             
-            // 改进的播放策略：先等待加载，再播放
-            try {
-                // 等待音频加载到可以播放的状态
-                await new Promise((resolve, reject) => {
-                    const timeout = setTimeout(() => {
-                        reject(new Error(`音频 ${recordId} 加载超时 (20秒)`));
-                    }, 20000); // 增加到20秒超时
-                    
-                    const handleCanPlay = () => {
-                        clearTimeout(timeout);
-                        audioElement.removeEventListener('canplay', handleCanPlay);
-                        audioElement.removeEventListener('canplaythrough', handleCanPlay);
-                        audioElement.removeEventListener('error', handleError);
-                        audioElement.removeEventListener('abort', handleAbort);
-                        resolve();
-                    };
-                    
-                    const handleError = (error) => {
-                        clearTimeout(timeout);
-                        audioElement.removeEventListener('canplay', handleCanPlay);
-                        audioElement.removeEventListener('canplaythrough', handleCanPlay);
-                        audioElement.removeEventListener('error', handleError);
-                        audioElement.removeEventListener('abort', handleAbort);
-                        reject(new Error(`音频 ${recordId} 加载失败: ${error.target.error?.message || '未知错误'}`));
-                    };
-                    
-                    const handleAbort = () => {
-                        clearTimeout(timeout);
-                        audioElement.removeEventListener('canplay', handleCanPlay);
-                        audioElement.removeEventListener('canplaythrough', handleCanPlay);
-                        audioElement.removeEventListener('error', handleError);
-                        audioElement.removeEventListener('abort', handleAbort);
-                        reject(new Error(`音频 ${recordId} 加载被中断`));
-                    };
-                    
-                    // 如果已经可以播放，直接解析
-                    if (audioElement.readyState >= 2) {
-                        clearTimeout(timeout);
-                        resolve();
-                        return;
-                    }
-                    
-                    audioElement.addEventListener('canplay', handleCanPlay);
-                    audioElement.addEventListener('canplaythrough', handleCanPlay);
-                    audioElement.addEventListener('error', handleError);
-                    audioElement.addEventListener('abort', handleAbort);
-                });
+            // 等待音频加载到可以播放的状态
+            await new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                    reject(new Error(`音频 ${recordId} 加载超时 (10秒)`));
+                }, 10000);
                 
-                this.addDebugLog(`音频 ${recordId} 加载完成，准备播放`);
+                const handleCanPlay = () => {
+                    clearTimeout(timeout);
+                    audioElement.removeEventListener('canplay', handleCanPlay);
+                    audioElement.removeEventListener('error', handleError);
+                    resolve();
+                };
                 
-                // 尝试播放
-                await audioElement.play();
-                this.addDebugLog(`音频 ${recordId} 播放成功`, 'success');
+                const handleError = (error) => {
+                    clearTimeout(timeout);
+                    audioElement.removeEventListener('canplay', handleCanPlay);
+                    audioElement.removeEventListener('error', handleError);
+                    reject(new Error(`音频 ${recordId} 加载失败: ${error.target.error?.message || '未知错误'}`));
+                };
                 
-            } catch (playError) {
-                this.addDebugLog(`音频 ${recordId} 播放失败: ${playError.message}`);
-                
-                // 如果是移动端自动播放限制，尝试静音播放然后取消静音
-                if (playError.name === 'NotAllowedError' || playError.message.includes('autoplay')) {
-                    this.addDebugLog(`尝试静音播放策略: ${recordId}`);
-                    try {
-                        audioElement.muted = true;
-                        await audioElement.play();
-                        audioElement.muted = false;
-                        this.addDebugLog(`音频 ${recordId} 静音播放成功，已取消静音`, 'success');
-                    } catch (mutedPlayError) {
-                        this.addDebugLog(`静音播放也失败: ${mutedPlayError.message}`, 'error');
-                        throw playError; // 抛出原始错误
-                    }
-                } else {
-                    throw playError;
+                // 如果已经可以播放，直接解析
+                if (audioElement.readyState >= 2) {
+                    clearTimeout(timeout);
+                    resolve();
+                    return;
                 }
-            }
+                
+                audioElement.addEventListener('canplay', handleCanPlay);
+                audioElement.addEventListener('error', handleError);
+            });
+            
+            this.addDebugLog(`音频 ${recordId} 加载完成，准备播放`);
+            
+            // 尝试播放
+            await audioElement.play();
+            this.addDebugLog(`音频 ${recordId} 播放成功`, 'success');
             
             // 设置加载完成状态
             this.audioLoadingStates.set(recordId, 'loaded');
@@ -643,83 +502,17 @@ class DetailPage {
             this.playingRecords.add(recordId);
             this.isPlaying = true;
             
-            // 更新最后使用时间
-            audioElement._lastUsed = Date.now();
-            
-            // 清理过期的音频元素
-            this._cleanupExpiredAudioElements();
-            
             this.updateUI();
             
         } catch (error) {
             this.addDebugLog(`音频 ${recordId} 最终播放失败: ${error.message}`, 'error');
             this.audioLoadingStates.set(recordId, 'error');
             
-            // 强制重新创建音频元素，解决移动端播放问题
-            this._forceRecreateAudioElement(recordId);
-            
             // 清理错误状态
             this.playingRecords.delete(recordId);
             this.audioPlayers.delete(recordId);
             
             throw error;
-        }
-    }
-
-    // 清理音频元素的辅助方法
-    _cleanupAudioElement(audioElement, recordId) {
-        try {
-            // 暂停音频
-            audioElement.pause();
-            audioElement.currentTime = 0;
-            
-            // 清除事件监听器
-            if (audioElement._timeUpdateHandler) {
-                audioElement.removeEventListener('timeupdate', audioElement._timeUpdateHandler);
-            }
-            if (audioElement._loadedMetadataHandler) {
-                audioElement.removeEventListener('loadedmetadata', audioElement._loadedMetadataHandler);
-            }
-            
-            // 从DOM中移除
-            if (audioElement.parentNode) {
-                audioElement.parentNode.removeChild(audioElement);
-            }
-        } catch (error) {
-            console.warn(`清理音频元素 ${recordId} 时出错:`, error);
-        }
-    }
-
-    // 清理过期的音频元素，避免内存泄漏
-    _cleanupExpiredAudioElements() {
-        const maxCachedElements = 10; // 最多保留10个音频元素
-        const audioPlayerEntries = Array.from(this.audioPlayers.entries());
-        
-        if (audioPlayerEntries.length > maxCachedElements) {
-            // 按最后使用时间排序，移除最旧的
-            const sortedEntries = audioPlayerEntries.sort((a, b) => {
-                const aLastUsed = a[1]._lastUsed || 0;
-                const bLastUsed = b[1]._lastUsed || 0;
-                return aLastUsed - bLastUsed;
-            });
-            
-            // 移除多余的音频元素
-            const toRemove = sortedEntries.slice(0, audioPlayerEntries.length - maxCachedElements);
-            for (const [recordId, audioElement] of toRemove) {
-                this.addDebugLog(`清理过期音频元素: ${recordId}`);
-                this._cleanupAudioElement(audioElement, recordId);
-                this.audioPlayers.delete(recordId);
-            }
-        }
-    }
-
-    // 强制重新创建音频元素，解决移动端播放问题
-    _forceRecreateAudioElement(recordId) {
-        const audioElement = this.audioPlayers.get(recordId);
-        if (audioElement) {
-            this.addDebugLog(`强制重新创建音频元素: ${recordId}`);
-            this._cleanupAudioElement(audioElement, recordId);
-            this.audioPlayers.delete(recordId);
         }
     }
 
@@ -735,31 +528,32 @@ class DetailPage {
         // 清理加载状态
         this.audioLoadingStates.delete(recordId);
         
-        // 清理播放历史，这样重新进入范围时可以重新播放
-        this.audioPlayHistory.delete(recordId);
-        
-        // 注意：不在这里重置播放状态，只有在离开范围时才重置
-        // 这样可以避免播放完成后立即变为0的问题
-        
         const audioElement = this.audioPlayers.get(recordId);
         if (audioElement) {
             try {
-                // 只暂停音频，不清理元素，以便复用
+                // 暂停音频
                 audioElement.pause();
                 audioElement.currentTime = 0;
                 
-                // 从播放记录中移除，但保留音频元素
+                // 清理事件监听器
+                if (audioElement._timeUpdateHandler) {
+                    audioElement.removeEventListener('timeupdate', audioElement._timeUpdateHandler);
+                }
+                
+                // 从DOM中移除
+                if (audioElement.parentNode) {
+                    audioElement.parentNode.removeChild(audioElement);
+                }
+                
+                // 从播放记录中移除
                 this.playingRecords.delete(recordId);
+                this.audioPlayers.delete(recordId);
                 
-                // 更新最后使用时间
-                audioElement._lastUsed = Date.now();
-                
-                this.addDebugLog(`音频 ${recordId} 已暂停，保留元素以便复用`);
+                this.addDebugLog(`音频 ${recordId} 已停止并清理`);
                 
             } catch (error) {
                 console.error(`停止音频 ${recordId} 时出错:`, error);
-                // 如果出错，完全清理音频元素
-                this._cleanupAudioElement(audioElement, recordId);
+                // 如果出错，强制清理
                 this.audioPlayers.delete(recordId);
                 this.playingRecords.delete(recordId);
             }
@@ -787,19 +581,14 @@ class DetailPage {
             this.stopSpecificAudio(recordId);
         }
         
-        // 重置所有音频的播放状态，允许用户重新播放
-        this.audioRangeStates.forEach((state, recordId) => {
-            if (state.inRange) {
-                state.hasPlayedInRange = false;
-            }
-        });
+        // 清理音频范围状态
+        this.audioRangeStates.clear();
         
-        // 确保状态重置，但保留音频元素以便复用
+        // 确保状态重置
         this.isPlaying = false;
         this.playingRecords.clear();
-        // 不清理 audioPlayers，保留音频元素以便复用
         
-        this.addDebugLog('所有音频已停止，保留音频元素以便复用', 'info');
+        this.addDebugLog('所有音频已停止', 'info');
         this.updateUI();
     }
 
@@ -951,7 +740,7 @@ class DetailPage {
         }
         
         // 添加用户交互状态
-        debugHTML += '<div class="debug-item">用户交互: ' + (this.hasUserInteracted ? '✓' : '✗') + '</div>';
+        debugHTML += '<div class="debug-item">用户交互: ✓</div>';
         debugHTML += '<div class="debug-item">追踪状态: ' + (this.isTracking ? '开启' : '关闭') + '</div>';
         
         nearby.forEach(({ marker, distance, idx }) => {
@@ -986,12 +775,6 @@ class DetailPage {
         const errorCount = Array.from(this.audioLoadingStates.values()).filter(state => state === 'error').length;
         if (loadingCount > 0 || errorCount > 0) {
             debugHTML += '<div class="debug-item">加载中: ' + loadingCount + ' 个, 错误: ' + errorCount + ' 个</div>';
-        }
-        
-        // 添加重试状态
-        if (this.audioRetryCount.size > 0) {
-            const retryInfo = Array.from(this.audioRetryCount.entries()).map(([id, count]) => `${id}:${count}`).join(', ');
-            debugHTML += '<div class="debug-item">重试中: ' + retryInfo + '</div>';
         }
 
         debugContent.innerHTML = debugHTML;
@@ -1216,9 +999,6 @@ class DetailPage {
         // 停止所有音频播放
         this.stopAudio();
         
-        // 清理播放历史，这样重新开始追踪时可以重新播放
-        this.audioPlayHistory.clear();
-        
         // 清理音频范围状态
         this.audioRangeStates.clear();
         
@@ -1247,9 +1027,6 @@ class DetailPage {
         
         // 清理所有音频资源
         this.stopAudio();
-        
-        // 清理缓存
-        this.audioCache.clear();
         
         // 清理地图资源
         if (this.map) {
