@@ -40,6 +40,14 @@ class DetailPage {
         this.debugLogObjects = []; // 存储日志对象 {timestamp, message, type}
         this.maxDebugLogs = 10; // 最多显示10条日志
         
+        // 音频权限和后台播放管理
+        this.audioContext = null; // Web Audio API 上下文
+        this.audioPermissionGranted = false; // 音频权限状态
+        this.userInteracted = false; // 用户是否已交互
+        this.backgroundAudioEnabled = false; // 后台播放是否启用
+        this.audioResumeQueue = []; // 需要恢复播放的音频队列
+        this.visibilityChangeHandler = null; // 页面可见性变化处理器
+        
         this.bindEvents();
     }
 
@@ -63,6 +71,21 @@ class DetailPage {
                 this.goBack();
             });
         }
+        
+        // 音频权限和后台播放管理
+        this.initAudioPermissions();
+        this.setupVisibilityChangeHandler();
+        
+        // 监听用户交互以启用音频播放
+        document.addEventListener('touchstart', () => {
+            this.userInteracted = true;
+            this.tryResumeAudioContext();
+        }, { once: true });
+        
+        document.addEventListener('click', () => {
+            this.userInteracted = true;
+            this.tryResumeAudioContext();
+        }, { once: true });
     }
 
     async init(id, userId, userName) {
@@ -346,6 +369,142 @@ class DetailPage {
         }
     }
 
+    // 初始化音频权限
+    async initAudioPermissions() {
+        try {
+            // 检查是否支持 Web Audio API
+            if (typeof AudioContext !== 'undefined' || typeof webkitAudioContext !== 'undefined') {
+                this.audioContext = new (AudioContext || webkitAudioContext)();
+                
+                // 检查音频权限状态
+                if (this.audioContext.state === 'suspended') {
+                    this.addDebugLog('音频上下文已暂停，等待用户交互', 'warning');
+                } else if (this.audioContext.state === 'running') {
+                    this.audioPermissionGranted = true;
+                    this.addDebugLog('音频权限已获取', 'success');
+                }
+            }
+            
+            // 检查是否支持后台播放
+            this.checkBackgroundAudioSupport();
+            
+        } catch (error) {
+            console.error('初始化音频权限失败:', error);
+            this.addDebugLog(`音频权限初始化失败: ${error.message}`, 'error');
+        }
+    }
+    
+    // 检查后台播放支持
+    checkBackgroundAudioSupport() {
+        // 检查是否支持后台播放
+        if ('mediaSession' in navigator) {
+            navigator.mediaSession.setActionHandler('play', () => {
+                this.resumeAllAudio();
+            });
+            navigator.mediaSession.setActionHandler('pause', () => {
+                this.pauseAllAudio();
+            });
+            this.backgroundAudioEnabled = true;
+            this.addDebugLog('后台播放支持已启用', 'success');
+        } else {
+            this.addDebugLog('当前浏览器不支持后台播放', 'warning');
+        }
+    }
+    
+    // 设置页面可见性变化处理器
+    setupVisibilityChangeHandler() {
+        this.visibilityChangeHandler = () => {
+            if (document.hidden) {
+                this.addDebugLog('页面进入后台', 'info');
+                // 页面进入后台时的处理
+                this.handlePageHidden();
+            } else {
+                this.addDebugLog('页面回到前台', 'info');
+                // 页面回到前台时的处理
+                this.handlePageVisible();
+            }
+        };
+        
+        document.addEventListener('visibilitychange', this.visibilityChangeHandler);
+    }
+    
+    // 页面进入后台时的处理
+    handlePageHidden() {
+        // 保存当前播放状态
+        this.audioResumeQueue = Array.from(this.playingRecords);
+        
+        // 尝试保持音频播放（如果支持后台播放）
+        if (!this.backgroundAudioEnabled) {
+            this.addDebugLog('暂停所有音频（不支持后台播放）', 'warning');
+            this.pauseAllAudio();
+        }
+    }
+    
+    // 页面回到前台时的处理
+    handlePageVisible() {
+        // 恢复音频上下文
+        this.tryResumeAudioContext();
+        
+        // 恢复之前播放的音频
+        if (this.audioResumeQueue.length > 0 && this.backgroundAudioEnabled) {
+            this.addDebugLog('恢复后台播放的音频', 'info');
+            this.resumeQueuedAudio();
+        }
+    }
+    
+    // 尝试恢复音频上下文
+    async tryResumeAudioContext() {
+        if (this.audioContext && this.audioContext.state === 'suspended') {
+            try {
+                await this.audioContext.resume();
+                this.audioPermissionGranted = true;
+                this.addDebugLog('音频上下文已恢复', 'success');
+            } catch (error) {
+                console.error('恢复音频上下文失败:', error);
+                this.addDebugLog(`恢复音频上下文失败: ${error.message}`, 'error');
+            }
+        }
+    }
+    
+    // 暂停所有音频
+    pauseAllAudio() {
+        for (const [recordId, audioElement] of this.audioPlayers) {
+            if (!audioElement.paused) {
+                audioElement.pause();
+                this.addDebugLog(`音频 ${recordId} 已暂停`, 'info');
+            }
+        }
+    }
+    
+    // 恢复所有音频
+    resumeAllAudio() {
+        for (const [recordId, audioElement] of this.audioPlayers) {
+            if (audioElement.paused) {
+                audioElement.play().catch(error => {
+                    console.error(`恢复音频 ${recordId} 失败:`, error);
+                    this.addDebugLog(`恢复音频 ${recordId} 失败: ${error.message}`, 'error');
+                });
+            }
+        }
+    }
+    
+    // 恢复队列中的音频
+    async resumeQueuedAudio() {
+        for (const recordId of this.audioResumeQueue) {
+            const audioElement = this.audioPlayers.get(recordId);
+            if (audioElement && audioElement.paused) {
+                try {
+                    await audioElement.play();
+                    this.addDebugLog(`音频 ${recordId} 已恢复播放`, 'success');
+                } catch (error) {
+                    console.error(`恢复音频 ${recordId} 失败:`, error);
+                    this.addDebugLog(`恢复音频 ${recordId} 失败: ${error.message}`, 'error');
+                }
+            }
+        }
+        this.audioResumeQueue = [];
+    }
+
     // 播放音频文件（支持多音频同时播放）
     async playAudio(record, userId) {
         if (!record.record_id) return;
@@ -359,6 +518,22 @@ class DetailPage {
             return;
         }
         
+        // 检查用户是否已交互
+        if (!this.userInteracted) {
+            this.addDebugLog('等待用户交互以启用音频播放', 'warning');
+            return;
+        }
+        
+        // 检查音频权限
+        if (this.audioContext && this.audioContext.state === 'suspended') {
+            try {
+                await this.tryResumeAudioContext();
+            } catch (error) {
+                this.addDebugLog(`音频权限检查失败: ${error.message}`, 'error');
+                return;
+            }
+        }
+        
         try {
             // 设置加载状态
             this.audioLoadingStates.set(recordId, 'loading');
@@ -370,6 +545,10 @@ class DetailPage {
             audioElement.src = downloadUrl;
             audioElement.volume = 1.0;
             audioElement.loop = record.isLoop || false;
+            
+            // 设置音频属性以支持后台播放
+            audioElement.preload = 'auto';
+            audioElement.crossOrigin = 'anonymous';
             
             // 设置播放范围
             if (record.start_time && record.end_time) {
@@ -396,13 +575,31 @@ class DetailPage {
             // 音频错误处理
             audioElement.addEventListener('error', (error) => {
                 console.error(`音频 ${recordId} 播放错误:`, error);
-                this.addDebugLog(`音频 ${recordId} 播放错误: ${error.target.error?.message || '未知错误'}`);
+                const errorMessage = error.target.error?.message || '未知错误';
+                this.addDebugLog(`音频 ${recordId} 播放错误: ${errorMessage}`, 'error');
+                
+                // 特殊处理权限错误
+                if (errorMessage.includes('permission') || errorMessage.includes('user agent') || errorMessage.includes('platform')) {
+                    this.addDebugLog('检测到权限错误，尝试重新获取音频权限', 'warning');
+                    this.handleAudioPermissionError();
+                }
+                
                 this.stopSpecificAudio(recordId);
+            });
+            
+            // 音频加载成功处理
+            audioElement.addEventListener('canplaythrough', () => {
+                this.addDebugLog(`音频 ${recordId} 加载完成`, 'success');
             });
             
             // 直接尝试播放，不等待加载完成
             this.addDebugLog(`音频 ${recordId} 开始播放`);
-            await audioElement.play();
+            
+            // 使用 Promise 包装播放操作
+            const playPromise = audioElement.play();
+            if (playPromise !== undefined) {
+                await playPromise;
+            }
             
             // 播放成功
             this.addDebugLog(`音频 ${recordId} 播放成功`, 'success');
@@ -428,11 +625,40 @@ class DetailPage {
             this.updateUI();
             
         } catch (error) {
+            console.error(`音频 ${recordId} 播放失败:`, error);
             this.addDebugLog(`音频 ${recordId} 播放失败: ${error.message}`, 'error');
+            
+            // 特殊处理权限错误
+            if (error.message.includes('permission') || error.message.includes('user agent') || error.message.includes('platform')) {
+                this.addDebugLog('检测到权限错误，尝试重新获取音频权限', 'warning');
+                this.handleAudioPermissionError();
+            }
+            
             this.audioLoadingStates.set(recordId, 'error');
             this.playingRecords.delete(recordId);
             this.audioPlayers.delete(recordId);
         }
+    }
+    
+    // 处理音频权限错误
+    async handleAudioPermissionError() {
+        this.audioPermissionGranted = false;
+        
+        // 尝试重新初始化音频上下文
+        try {
+            if (this.audioContext) {
+                await this.audioContext.close();
+            }
+            this.audioContext = new (AudioContext || webkitAudioContext)();
+            this.addDebugLog('音频上下文已重新初始化', 'info');
+        } catch (error) {
+            console.error('重新初始化音频上下文失败:', error);
+            this.addDebugLog(`重新初始化音频上下文失败: ${error.message}`, 'error');
+        }
+        
+        // 提示用户重新交互
+        this.userInteracted = false;
+        this.addDebugLog('请点击屏幕以重新启用音频播放', 'warning');
     }
 
     // 停止特定音频播放
@@ -594,97 +820,67 @@ class DetailPage {
 
     // 更新调试信息
     updateDebugInfo() {
-        // 如果debug功能被禁用，隐藏debug区域
-        const debugSection = document.getElementById('debug-section');
-        if (debugSection) {
-            debugSection.style.display = this.debugEnabled ? 'block' : 'none';
-        }
-        
-        // 如果debug功能被禁用，直接返回
-        if (!this.debugEnabled) return;
-        
         const debugContent = document.getElementById('debug-content');
         if (!debugContent) return;
 
-        const currentLocation = window.app.globalData.currentLocation;
-        if (!currentLocation) {
-            debugContent.innerHTML = '<div class="debug-item no-data">等待位置数据...</div>';
-            return;
-        }
-
-        const storedData = this.getDataFromLocalStorage(this.userId);
-        if (!storedData || !storedData.locations) {
-            debugContent.innerHTML = '<div class="debug-item no-data">暂无位置数据</div>';
-            return;
-        }
-
-        // 查找50m内的所有点
-        const nearby = this.findNearbyMarkers(currentLocation, 60);
+        // 构建调试信息
+        let debugInfo = [];
         
-        if (nearby.length === 0) {
-            debugContent.innerHTML = '<div class="debug-item no-data">50m内无音频点</div>';
-            return;
-        }
-
-        // 生成调试信息
-        let debugHTML = '';
+        // 基本信息
+        debugInfo.push(`位置: ${this.globalData?.currentLocation ? '已获取' : '未获取'}`);
+        debugInfo.push(`追踪: ${this.isTracking ? '开启' : '关闭'}`);
+        debugInfo.push(`播放: ${this.isPlaying ? '开启' : '关闭'}`);
         
-        // 添加调试日志
-        if (this.debugLogObjects.length > 0) {
-            debugHTML += '<div class="debug-item debug-logs">调试日志:</div>';
-            this.debugLogObjects.forEach(log => {
-                const logClass = `debug-log debug-${log.type}`;
-                debugHTML += '<div class="debug-item ' + logClass + '">' + log.timestamp + ': ' + log.message + '</div>';
-            });
-            debugHTML += '<div class="debug-item debug-separator">---</div>';
+        // 音频权限信息
+        debugInfo.push(`音频权限: ${this.audioPermissionGranted ? '已获取' : '未获取'}`);
+        debugInfo.push(`用户交互: ${this.userInteracted ? '是' : '否'}`);
+        debugInfo.push(`后台播放: ${this.backgroundAudioEnabled ? '支持' : '不支持'}`);
+        
+        // 音频上下文状态
+        if (this.audioContext) {
+            debugInfo.push(`音频上下文: ${this.audioContext.state}`);
         }
         
-        // 添加用户交互状态
-        debugHTML += '<div class="debug-item">用户交互: ✓</div>';
-        debugHTML += '<div class="debug-item">追踪状态: ' + (this.isTracking ? '开启' : '关闭') + '</div>';
-        
-        nearby.forEach(({ marker, distance, idx }) => {
-            const key = `${marker.latitude}_${marker.longitude}`;
-            const audioData = storedData.records[key];
-            const hasAudio = audioData && audioData.records && audioData.records.length > 0;
-            
-            // 使用marker no作为点的编号，如果没有no则使用索引+1
-            const pointNumber = marker.no || (idx + 1);
-            
-            let audioStatus = '';
-            if (hasAudio) {
-                const recordIds = audioData.records.map(r => r.record_id);
-                const playingCount = recordIds.filter(id => this.playingRecords.has(id)).length;
-                const playedCount = recordIds.filter(id => {
-                    const state = this.audioRangeStates.get(id);
-                    return state && state.hasPlayedInRange;
-                }).length;
-                audioStatus = ` (播放中:${playingCount}, 已播放:${playedCount})`;
-            }
-            
-            debugHTML += '<div class="debug-item distance">点' + pointNumber + ': ' + distance.toFixed(1) + 'm ' + (hasAudio ? '✓' : '✗') + audioStatus + '</div>';
-        });
-
-        // 添加当前播放状态
-        if (this.playingRecords.size > 0) {
-            debugHTML += '<div class="debug-item">正在播放: ' + this.playingRecords.size + ' 个音频</div>';
+        // 音频播放统计
+        const playingCount = this.playingRecords.size;
+        const playedCount = Array.from(this.audioRangeStates.values()).filter(state => state.hasPlayedInRange).length;
+        let audioStatus = '';
+        if (playingCount > 0 || playedCount > 0) {
+            audioStatus = ` (播放中:${playingCount}, 已播放:${playedCount})`;
         }
+        debugInfo.push(`音频状态${audioStatus}`);
         
-        // 添加加载状态
+        // 音频加载状态统计
         const loadingCount = Array.from(this.audioLoadingStates.values()).filter(state => state === 'loading').length;
         const errorCount = Array.from(this.audioLoadingStates.values()).filter(state => state === 'error').length;
         if (loadingCount > 0 || errorCount > 0) {
-            debugHTML += '<div class="debug-item">加载中: ' + loadingCount + ' 个, 错误: ' + errorCount + ' 个</div>';
+            debugInfo.push(`加载状态 (加载中:${loadingCount}, 错误:${errorCount})`);
         }
-
-        debugContent.innerHTML = debugHTML;
         
-        // Safari兼容：强制重新计算布局
-        if (debugContent.offsetHeight) {
-            debugContent.style.display = 'none';
-            debugContent.offsetHeight; // 触发重排
-            debugContent.style.display = 'flex';
+        // 位置信息
+        if (this.globalData?.currentLocation) {
+            const loc = this.globalData.currentLocation;
+            debugInfo.push(`坐标: ${loc.latitude.toFixed(6)}, ${loc.longitude.toFixed(6)}`);
+            debugInfo.push(`精度: ${loc.accuracy ? loc.accuracy.toFixed(1) + 'm' : '未知'}`);
         }
+        
+        // 地图信息
+        if (this.map) {
+            const center = this.map.getCenter();
+            debugInfo.push(`地图中心: ${center.lat.toFixed(6)}, ${center.lng.toFixed(6)}`);
+            debugInfo.push(`缩放级别: ${this.map.getZoom()}`);
+        }
+        
+        // 最近日志
+        if (this.debugLogs.length > 0) {
+            debugInfo.push('--- 最近日志 ---');
+            this.debugLogs.slice(-3).forEach(log => {
+                debugInfo.push(log);
+            });
+        }
+        
+        // 更新显示
+        debugContent.innerHTML = debugInfo.map(info => `<div class="debug-item">${info}</div>`).join('');
     }
 
     initMap(currentLocation, locations) {
@@ -883,34 +1079,33 @@ class DetailPage {
         }
     }
 
+    // 停止追踪
     stopTracking() {
-        // console.log('停止追踪');
         this.isTracking = false;
-        this.buttonText = 'start tracking and playing';
-        this.progress = 0;
-        
-        // 清理防抖定时器
-        if (this.proximityCheckTimeout) {
-            clearTimeout(this.proximityCheckTimeout);
-            this.proximityCheckTimeout = null;
-        }
-        this.lastProximityCheck = 0;
-        
-        // 停止所有音频播放
         this.stopAudio();
         
-        // 重置所有音频的播放状态，允许用户重新开始追踪
-        this.audioRangeStates.forEach((state, recordId) => {
-            state.hasPlayedInRange = false;
-        });
+        // 重置音频范围状态
+        this.audioRangeStates.clear();
         
-        // 确保状态重置
-        this.isPlaying = false;
-        this.isButtonDisabled = false;
+        // 清理位置更新回调
+        window.app.setLocationCallback(null);
         
+        // 清理音频权限管理的事件监听器
+        if (this.visibilityChangeHandler) {
+            document.removeEventListener('visibilitychange', this.visibilityChangeHandler);
+            this.visibilityChangeHandler = null;
+        }
+        
+        // 清理音频上下文
+        if (this.audioContext) {
+            this.audioContext.close().catch(error => {
+                console.error('关闭音频上下文失败:', error);
+            });
+            this.audioContext = null;
+        }
+        
+        this.addDebugLog('追踪已停止', 'info');
         this.updateUI();
-        
-        window.app.showToast('已停止追踪');
     }
 
     goBack() {

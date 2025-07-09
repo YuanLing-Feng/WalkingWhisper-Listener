@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#000000">
+    <title>音频权限测试</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border-left: 4px solid;
+        }
+        .status.success {
+            background: #d4edda;
+            border-color: #28a745;
+            color: #155724;
+        }
+        .status.warning {
+            background: #fff3cd;
+            border-color: #ffc107;
+            color: #856404;
+        }
+        .status.error {
+            background: #f8d7da;
+            border-color: #dc3545;
+            color: #721c24;
+        }
+        .status.info {
+            background: #d1ecf1;
+            border-color: #17a2b8;
+            color: #0c5460;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+        .log {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 10px;
+            margin: 10px 0;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>音频权限测试</h1>
+        
+        <div id="support-status"></div>
+        <div id="permission-status"></div>
+        
+        <div>
+            <button onclick="testAudioSupport()">检查音频支持</button>
+            <button onclick="requestPermission()">请求音频权限</button>
+            <button onclick="testPlayback()">测试播放</button>
+            <button onclick="testBackgroundPlayback()">测试后台播放</button>
+        </div>
+        
+        <div class="log" id="log"></div>
+    </div>
+
+    <script src="js/utils.js"></script>
+    <script>
+        let audioContext = null;
+        let testAudio = null;
+        
+        function log(message, type = 'info') {
+            const logElement = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = `[${timestamp}] ${message}`;
+            logElement.innerHTML += logEntry + '\n';
+            logElement.scrollTop = logElement.scrollHeight;
+            console.log(logEntry);
+        }
+        
+        function updateStatus(elementId, message, type) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = `<div class="status ${type}">${message}</div>`;
+        }
+        
+        function testAudioSupport() {
+            log('开始检查音频支持...');
+            
+            if (window.AudioPermissionManager) {
+                const support = AudioPermissionManager.checkAudioSupport();
+                log(`Web Audio API: ${support.webAudioAPI ? '支持' : '不支持'}`);
+                log(`Media Session: ${support.mediaSession ? '支持' : '不支持'}`);
+                log(`Autoplay: ${support.autoplay ? '支持' : '不支持'}`);
+                log(`后台播放: ${support.backgroundPlayback ? '支持' : '不支持'}`);
+                
+                let supportMessage = '音频支持检查完成';
+                let supportType = 'success';
+                
+                if (!support.webAudioAPI) {
+                    supportMessage = '浏览器不支持Web Audio API';
+                    supportType = 'error';
+                } else if (!support.backgroundPlayback) {
+                    supportMessage = '浏览器不支持后台播放';
+                    supportType = 'warning';
+                }
+                
+                updateStatus('support-status', supportMessage, supportType);
+            } else {
+                log('AudioPermissionManager 未加载', 'error');
+                updateStatus('support-status', 'AudioPermissionManager 未加载', 'error');
+            }
+        }
+        
+        async function requestPermission() {
+            log('开始请求音频权限...');
+            
+            try {
+                const result = await AudioPermissionManager.requestAudioPermission();
+                
+                if (result.success) {
+                    audioContext = result.context;
+                    log(`音频权限获取成功，状态: ${result.state}`, 'success');
+                    updateStatus('permission-status', `音频权限已获取 (${result.state})`, 'success');
+                } else {
+                    log(`音频权限获取失败: ${result.error}`, 'error');
+                    updateStatus('permission-status', `权限获取失败: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                log(`请求权限时出错: ${error.message}`, 'error');
+                updateStatus('permission-status', `请求权限出错: ${error.message}`, 'error');
+            }
+        }
+        
+        async function testPlayback() {
+            log('开始测试音频播放...');
+            
+            if (!audioContext) {
+                log('请先获取音频权限', 'warning');
+                return;
+            }
+            
+            try {
+                // 创建一个简单的测试音频
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                
+                oscillator.frequency.setValueAtTime(440, audioContext.currentTime); // A4音符
+                gainNode.gain.setValueAtTime(0.1, audioContext.currentTime);
+                
+                oscillator.start(audioContext.currentTime);
+                oscillator.stop(audioContext.currentTime + 1);
+                
+                log('测试音频播放成功 (1秒A4音符)', 'success');
+            } catch (error) {
+                log(`测试播放失败: ${error.message}`, 'error');
+            }
+        }
+        
+        function testBackgroundPlayback() {
+            log('开始测试后台播放...');
+            
+            if (!window.AudioPermissionManager) {
+                log('AudioPermissionManager 未加载', 'error');
+                return;
+            }
+            
+            // 创建测试音频元素
+            testAudio = AudioPermissionManager.createBackgroundAudio(
+                'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7blmGgU7k9n1unEiBC13yO/eizEIHWq+8+OWT',
+                {
+                    title: '测试音频',
+                    artist: 'WalkingWhisper',
+                    volume: 0.5,
+                    loop: false
+                }
+            );
+            
+            // 设置媒体会话控制
+            AudioPermissionManager.setupMediaSessionControls(testAudio, {
+                onPlay: () => log('媒体会话: 播放', 'info'),
+                onPause: () => log('媒体会话: 暂停', 'info'),
+                onStop: () => log('媒体会话: 停止', 'info')
+            });
+            
+            // 尝试播放
+            testAudio.play().then(() => {
+                log('后台播放测试成功', 'success');
+                updateStatus('permission-status', '后台播放测试成功', 'success');
+            }).catch(error => {
+                log(`后台播放测试失败: ${error.message}`, 'error');
+                updateStatus('permission-status', `后台播放失败: ${error.message}`, 'error');
+            });
+        }
+        
+        // 页面加载时自动检查
+        window.addEventListener('load', () => {
+            log('页面加载完成，开始自动检查...');
+            testAudioSupport();
+        });
+        
+        // 监听页面可见性变化
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                log('页面进入后台', 'warning');
+            } else {
+                log('页面回到前台', 'info');
+            }
+        });
+    </script>
+</body>
+</html> 
