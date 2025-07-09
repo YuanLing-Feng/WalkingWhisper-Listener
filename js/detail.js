@@ -38,6 +38,13 @@ class DetailPage {
         this.lastProximityCheck = 0;
         this.proximityCheckInterval = 1000; // 1秒间隔追踪距离变化
         
+        // 用户交互检测（用于移动端自动播放）
+        this.hasUserInteracted = false;
+        
+        // 调试日志系统
+        this.debugLogs = [];
+        this.maxDebugLogs = 10; // 最多显示10条日志
+        
         this.bindEvents();
     }
 
@@ -50,6 +57,7 @@ class DetailPage {
         const playButton = document.getElementById('play-button');
         if (playButton) {
             playButton.addEventListener('click', () => {
+                this.hasUserInteracted = true; // 标记用户已交互
                 this.handlePlayAudio();
             });
         }
@@ -58,9 +66,21 @@ class DetailPage {
         const backButton = document.getElementById('back-button');
         if (backButton) {
             backButton.addEventListener('click', () => {
+                this.hasUserInteracted = true; // 标记用户已交互
                 this.goBack();
             });
         }
+        
+        // 监听页面上的任何用户交互，用于移动端自动播放
+        document.addEventListener('touchstart', () => {
+            this.hasUserInteracted = true;
+            this.addDebugLog('用户触摸交互，允许自动播放');
+        }, { once: true });
+        
+        document.addEventListener('click', () => {
+            this.hasUserInteracted = true;
+            this.addDebugLog('用户点击交互，允许自动播放');
+        }, { once: true });
     }
 
     async init(id, userId, userName) {
@@ -349,14 +369,22 @@ class DetailPage {
         if (!record.record_id) return;
         
         const recordId = record.record_id;
+        this.addDebugLog(`准备播放音频: ${recordId}`);
         
         // 检查是否正在加载相同的音频
         if (this.audioPlayPromises.has(recordId)) {
+            this.addDebugLog(`音频 ${recordId} 正在加载中，等待完成`);
             try {
                 await this.audioPlayPromises.get(recordId);
             } catch (error) {
                 console.warn(`等待音频 ${recordId} 加载失败:`, error);
             }
+            return;
+        }
+        
+        // 检查用户是否已交互（移动端自动播放限制）
+        if (!this.hasUserInteracted) {
+            this.addDebugLog(`用户未交互，跳过音频播放: ${recordId}`);
             return;
         }
         
@@ -389,7 +417,7 @@ class DetailPage {
             });
             
         } catch (error) {
-            console.error(`音频 ${recordId} 播放失败:`, error);
+            this.addDebugLog(`音频 ${recordId} 播放失败: ${error.message}`);
             // 清理错误状态
             this.audioLoadingStates.set(recordId, 'error');
             this.playingRecords.delete(recordId);
@@ -421,6 +449,10 @@ class DetailPage {
             // 设置音频属性
             audioElement.volume = 1.0;
             audioElement.loop = record.isLoop || false;
+            
+            // 针对移动端的自动播放优化
+            audioElement.muted = false;
+            audioElement.autoplay = false; // 不设置autoplay，手动控制播放
             
             // 检查缓存
             if (this.audioCache.has(recordId)) {
@@ -467,10 +499,12 @@ class DetailPage {
             
             // 直接尝试播放，不等待完全加载
             try {
+                this.addDebugLog(`尝试直接播放音频: ${recordId}`);
                 await audioElement.play();
+                this.addDebugLog(`音频 ${recordId} 直接播放成功`);
             } catch (playError) {
                 // 如果直接播放失败，尝试等待加载后播放
-
+                this.addDebugLog(`直接播放失败，等待加载后重试: ${recordId}`);
                 
                 await new Promise((resolve, reject) => {
                     const timeout = setTimeout(() => {
@@ -483,9 +517,12 @@ class DetailPage {
                         audioElement.removeEventListener('error', handleError);
                         
                         try {
+                            this.addDebugLog(`音频 ${recordId} 加载完成，尝试播放`);
                             await audioElement.play();
+                            this.addDebugLog(`音频 ${recordId} 加载后播放成功`);
                             resolve();
                         } catch (error) {
+                            this.addDebugLog(`音频 ${recordId} 加载后播放失败: ${error.message}`);
                             reject(error);
                         }
                     };
@@ -515,7 +552,7 @@ class DetailPage {
 
             
         } catch (error) {
-            console.error(`音频 ${recordId} 播放失败:`, error);
+            this.addDebugLog(`音频 ${recordId} 播放失败: ${error.message}`);
             this.audioLoadingStates.set(recordId, 'error');
             
             // 清理可能创建的音频元素
@@ -695,6 +732,20 @@ class DetailPage {
         this.updateDebugInfo();
     }
 
+    // 添加调试日志
+    addDebugLog(message) {
+        const timestamp = new Date().toLocaleTimeString();
+        this.debugLogs.unshift(`${timestamp}: ${message}`);
+        
+        // 限制日志数量
+        if (this.debugLogs.length > this.maxDebugLogs) {
+            this.debugLogs = this.debugLogs.slice(0, this.maxDebugLogs);
+        }
+        
+        // 立即更新调试信息
+        this.updateDebugInfo();
+    }
+
     // 更新调试信息
     updateDebugInfo() {
         const debugContent = document.getElementById('debug-content');
@@ -722,6 +773,20 @@ class DetailPage {
 
         // 生成调试信息
         let debugHTML = '';
+        
+        // 添加调试日志
+        if (this.debugLogs.length > 0) {
+            debugHTML += '<div class="debug-item debug-logs">调试日志:</div>';
+            this.debugLogs.forEach(log => {
+                debugHTML += `<div class="debug-item debug-log">${log}</div>`;
+            });
+            debugHTML += '<div class="debug-item debug-separator">---</div>';
+        }
+        
+        // 添加用户交互状态
+        debugHTML += `<div class="debug-item">用户交互: ${this.hasUserInteracted ? '✓' : '✗'}</div>`;
+        debugHTML += `<div class="debug-item">追踪状态: ${this.isTracking ? '开启' : '关闭'}</div>`;
+        
         nearby.forEach(({ marker, distance, idx }) => {
             const key = `${marker.latitude}_${marker.longitude}`;
             const audioData = storedData.records[key];
@@ -924,17 +989,17 @@ class DetailPage {
         this.buttonText = 'stop tracking';
         this.updateUI();
         
-        // console.log('Tracking started, isTracking:', this.isTracking);
+        this.addDebugLog('开始追踪');
         window.app.showToast('开始追踪，请移动到音频点附近');
         
         // 立即检查当前位置，不受防抖机制影响
         const currentLocation = window.app.globalData.currentLocation;
         if (currentLocation) {
-            // console.log('Immediately checking current location for tracking');
+            this.addDebugLog('立即检查当前位置');
             // 直接调用检查方法，跳过防抖
             this.checkProximityToMarkers(currentLocation);
         } else {
-            // console.log('No current location available for immediate check');
+            this.addDebugLog('暂无位置数据，等待位置更新');
         }
     }
 
@@ -1111,9 +1176,10 @@ class DetailPage {
     async checkProximityToMarkers(userLocation) {
         // 如果不在追踪状态，直接返回
         if (!this.isTracking) {
-            // console.log('不在追踪状态，跳过位置检查');
             return;
         }
+        
+        this.addDebugLog('开始位置检查');
         
                 const storedData = this.getDataFromLocalStorage(this.userId);
         if (!storedData || !storedData.locations) {
@@ -1157,22 +1223,24 @@ class DetailPage {
             
             // 检查是否已经在播放
             if (this.playingRecords.has(record.record_id)) {
+                this.addDebugLog(`音频 ${record.record_id} 已在播放中，跳过`);
                 continue;
             }
             
             // 检查在范围内是否已经播放过
             const rangeState = this.audioRangeStates.get(record.record_id);
             if (rangeState && rangeState.hasPlayedInRange) {
+                this.addDebugLog(`音频 ${record.record_id} 在范围内已播放过，跳过`);
                 continue;
             }
             
             try {
                 const playPromise = this.playAudio(record, this.userId).catch(error => {
-                    console.warn(`音频 ${record.record_id} 播放失败，跳过:`, error);
+                    this.addDebugLog(`音频 ${record.record_id} 播放失败: ${error.message}`);
                 });
                 playPromises.push(playPromise);
             } catch (error) {
-                console.error(`准备播放音频 ${record.record_id} 失败:`, error);
+                this.addDebugLog(`准备播放音频 ${record.record_id} 失败: ${error.message}`);
             }
         }
         
