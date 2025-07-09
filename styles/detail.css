@@ -230,22 +230,6 @@
     -webkit-word-break: break-all;
 }
 
-.debug-log.debug-success {
-  color: #388e3c;
-  font-weight: bold;
-}
-.debug-log.debug-error {
-  color: #d32f2f;
-  font-weight: bold;
-}
-.debug-log.debug-warning {
-  color: #fbc02d;
-  font-weight: bold;
-}
-.debug-log.debug-info {
-  color: #1976d2;
-}
-
 .debug-separator {
     text-align: center;
     color: #adb5bd;
