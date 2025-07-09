@@ -158,6 +158,56 @@
     word-wrap: break-word;
 }
 
+/* 5. 调试信息部分 */
+.debug-section {
+    margin-top: 20px;
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-radius: 10px;
+    width: 95%;
+    max-width: 450px;
+    align-self: center;
+    border: 1px solid #e9ecef;
+}
+
+.debug-title {
+    font-size: 16px;
+    font-family: 'Inter', sans-serif;
+    font-weight: bold;
+    color: #495057;
+    margin-bottom: 10px;
+    text-align: center;
+}
+
+.debug-content {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.debug-item {
+    font-size: 14px;
+    font-family: 'Inter', sans-serif;
+    color: #6c757d;
+    line-height: 1.4;
+    padding: 3px 0;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.debug-item:last-child {
+    border-bottom: none;
+}
+
+.debug-item.distance {
+    color: #28a745;
+    font-weight: 500;
+}
+
+.debug-item.no-data {
+    color: #dc3545;
+    font-style: italic;
+}
+
 /* 返回按钮 */
 .back-button {
     position: absolute;

@@ -115,6 +115,9 @@ class DetailPage {
             this.setLoading(false);
             this.isInitializing = false;
             
+            // 更新调试信息
+            this.updateDebugInfo();
+            
             // 后台更新数据
             this.updateDataInBackground(userId, userName);
             return;
@@ -180,6 +183,9 @@ class DetailPage {
             // 8. 关闭加载状态并重置初始化标志
             this.setLoading(false);
             this.isInitializing = false;
+            
+            // 更新调试信息
+            this.updateDebugInfo();
             
         } catch (error) {
             console.error('初始化页面数据失败:', error);
@@ -658,6 +664,56 @@ class DetailPage {
         if (progressBar) {
             progressBar.style.width = `${this.progress}%`;
         }
+
+        // 更新调试信息
+        this.updateDebugInfo();
+    }
+
+    // 更新调试信息
+    updateDebugInfo() {
+        const debugContent = document.getElementById('debug-content');
+        if (!debugContent) return;
+
+        const currentLocation = window.app.globalData.currentLocation;
+        if (!currentLocation) {
+            debugContent.innerHTML = '<div class="debug-item no-data">等待位置数据...</div>';
+            return;
+        }
+
+        const storedData = this.getDataFromLocalStorage(this.userId);
+        if (!storedData || !storedData.locations) {
+            debugContent.innerHTML = '<div class="debug-item no-data">暂无位置数据</div>';
+            return;
+        }
+
+        // 查找50m内的所有点
+        const nearby = this.findNearbyMarkers(currentLocation, 50);
+        
+        if (nearby.length === 0) {
+            debugContent.innerHTML = '<div class="debug-item no-data">50m内无音频点</div>';
+            return;
+        }
+
+        // 生成调试信息
+        let debugHTML = '';
+        nearby.forEach(({ marker, distance, idx }) => {
+            const key = `${marker.latitude}_${marker.longitude}`;
+            const audioData = storedData.records[key];
+            const hasAudio = audioData && audioData.records && audioData.records.length > 0;
+            
+            debugHTML += `
+                <div class="debug-item distance">
+                    点${idx + 1}: ${distance.toFixed(1)}m ${hasAudio ? '✓' : '✗'}
+                </div>
+            `;
+        });
+
+        // 添加当前播放状态
+        if (this.playingRecords.size > 0) {
+            debugHTML += `<div class="debug-item">正在播放: ${this.playingRecords.size} 个音频</div>`;
+        }
+
+        debugContent.innerHTML = debugHTML;
     }
 
     initMap(currentLocation, locations) {
@@ -933,6 +989,9 @@ class DetailPage {
         // 更新用户位置标记
         this.updateUserMarker(location);
         
+        // 更新调试信息
+        this.updateDebugInfo();
+        
         // 如果正在追踪，使用防抖机制进行距离检测
         if (this.isTracking) {
             this.debouncedProximityCheck(location);
@@ -1004,7 +1063,7 @@ class DetailPage {
     }
 
     // 新增：查找100m范围内的点
-    findNearbyMarkers(userLocation, range = 100) {
+    findNearbyMarkers(userLocation, range = 50) {
         const storedData = this.getDataFromLocalStorage(this.userId);
         if (!storedData || !storedData.locations) return [];
         return storedData.locations
