@@ -42,6 +42,7 @@ class DetailPage {
         this.hasUserInteracted = false;
         
         // 调试日志系统
+        this.debugEnabled = false; // Debug功能开关
         this.debugLogs = [];
         this.maxDebugLogs = 10; // 最多显示10条日志
         
@@ -782,12 +783,15 @@ class DetailPage {
             progressBar.style.width = `${this.progress}%`;
         }
 
-        // 更新调试信息
+        // 更新调试信息（总是调用，内部会处理显示/隐藏）
         this.updateDebugInfo();
     }
 
     // 添加调试日志
     addDebugLog(message) {
+        // 如果debug功能被禁用，直接返回
+        if (!this.debugEnabled) return;
+        
         const timestamp = new Date().toLocaleTimeString();
         this.debugLogs.unshift(`${timestamp}: ${message}`);
         
@@ -807,6 +811,15 @@ class DetailPage {
 
     // 更新调试信息
     updateDebugInfo() {
+        // 如果debug功能被禁用，隐藏debug区域
+        const debugSection = document.getElementById('debug-section');
+        if (debugSection) {
+            debugSection.style.display = this.debugEnabled ? 'block' : 'none';
+        }
+        
+        // 如果debug功能被禁用，直接返回
+        if (!this.debugEnabled) return;
+        
         const debugContent = document.getElementById('debug-content');
         if (!debugContent) return;
 
@@ -851,7 +864,10 @@ class DetailPage {
             const audioData = storedData.records[key];
             const hasAudio = audioData && audioData.records && audioData.records.length > 0;
             
-            debugHTML += '<div class="debug-item distance">点' + (idx + 1) + ': ' + distance.toFixed(1) + 'm ' + (hasAudio ? '✓' : '✗') + '</div>';
+            // 使用marker no作为点的编号，如果没有no则使用索引+1
+            const pointNumber = marker.no || (idx + 1);
+            
+            debugHTML += '<div class="debug-item distance">点' + pointNumber + ': ' + distance.toFixed(1) + 'm ' + (hasAudio ? '✓' : '✗') + '</div>';
         });
 
         // 添加当前播放状态
@@ -1146,7 +1162,7 @@ class DetailPage {
         // 更新用户位置标记
         this.updateUserMarker(location);
         
-        // 更新调试信息
+        // 更新调试信息（总是调用，内部会处理显示/隐藏）
         this.updateDebugInfo();
         
         // 如果正在追踪，立即执行一次位置检查，防止防抖导致首次不触发
@@ -1440,5 +1456,17 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => {
             window.location.href = 'index.html';
         }, 2000);
+    }
+
+    // 隐秘Debug切换按钮逻辑
+    const debugToggleBtn = document.getElementById('debug-toggle-btn');
+    if (debugToggleBtn && window.detailPage) {
+        debugToggleBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const page = window.detailPage;
+            page.debugEnabled = !page.debugEnabled;
+            page.updateUI();
+            // console.log('Debug状态切换为:', page.debugEnabled ? '开启' : '关闭');
+        });
     }
 });
