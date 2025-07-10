@@ -29,10 +29,15 @@ class DetailPage {
         // 音频范围状态跟踪
         this.audioRangeStates = new Map(); // 音频范围状态 {record_id: {inRange: boolean, lastCheckTime: number, hasPlayedInRange: boolean}}
         
-        // 防抖机制
+        // 防抖机制 - 改进版本
         this.proximityCheckTimeout = null;
         this.lastProximityCheck = 0;
         this.proximityCheckInterval = 1000; // 1秒间隔追踪距离变化
+        this.isProximityChecking = false; // 防止重复检查的标志
+        
+        // 播放锁机制 - 新增
+        this.audioPlayLocks = new Map(); // 音频播放锁 {record_id: timestamp}
+        this.playLockTimeout = 3000; // 播放锁超时时间（3秒）
         
         // 调试日志系统
         this.debugEnabled = false; // Debug功能开关
@@ -359,6 +364,17 @@ class DetailPage {
             return;
         }
         
+        // 检查播放锁 - 防止短时间内重复播放
+        const now = Date.now();
+        const lockTime = this.audioPlayLocks.get(recordId);
+        if (lockTime && (now - lockTime) < this.playLockTimeout) {
+            this.addDebugLog(`音频 ${recordId} 播放锁未过期，跳过 (剩余${Math.ceil((this.playLockTimeout - (now - lockTime))/1000)}秒)`);
+            return;
+        }
+        
+        // 设置播放锁
+        this.audioPlayLocks.set(recordId, now);
+        
         try {
             // 设置加载状态
             this.audioLoadingStates.set(recordId, 'loading');
@@ -432,6 +448,8 @@ class DetailPage {
             this.audioLoadingStates.set(recordId, 'error');
             this.playingRecords.delete(recordId);
             this.audioPlayers.delete(recordId);
+            // 播放失败时清除播放锁，允许重试
+            this.audioPlayLocks.delete(recordId);
         }
     }
 
@@ -441,6 +459,9 @@ class DetailPage {
         
         // 清理加载状态
         this.audioLoadingStates.delete(recordId);
+        
+        // 清除播放锁
+        this.audioPlayLocks.delete(recordId);
         
         const audioElement = this.audioPlayers.get(recordId);
         if (audioElement) {
@@ -474,6 +495,9 @@ class DetailPage {
     stopAudio() {
         // 清理所有加载状态
         this.audioLoadingStates.clear();
+        
+        // 清理所有播放锁
+        this.audioPlayLocks.clear();
         
         // 停止所有正在播放的音频
         const recordIds = Array.from(this.playingRecords);
@@ -676,6 +700,17 @@ class DetailPage {
         if (loadingCount > 0 || errorCount > 0) {
             debugHTML += '<div class="debug-item">加载中: ' + loadingCount + ' 个, 错误: ' + errorCount + ' 个</div>';
         }
+        
+        // 添加播放锁状态
+        const lockedCount = this.audioPlayLocks.size;
+        if (lockedCount > 0) {
+            debugHTML += '<div class="debug-item">播放锁: ' + lockedCount + ' 个</div>';
+        }
+        
+        // 添加检查锁状态
+        if (this.isProximityChecking) {
+            debugHTML += '<div class="debug-item">位置检查: 进行中</div>';
+        }
 
         debugContent.innerHTML = debugHTML;
         
@@ -872,12 +907,12 @@ class DetailPage {
         this.addDebugLog('开始追踪', 'info');
         window.app.showToast('开始追踪，请移动到音频点附近');
         
-        // 立即检查当前位置，不受防抖机制影响
+        // 使用防抖机制检查当前位置，而不是直接调用
         const currentLocation = window.app.globalData.currentLocation;
         if (currentLocation) {
-            this.addDebugLog('立即检查当前位置');
-            // 直接调用检查方法，跳过防抖
-            this.checkProximityToMarkers(currentLocation);
+            this.addDebugLog('立即检查当前位置（使用防抖）');
+            // 使用防抖机制，但立即执行一次
+            this.debouncedProximityCheck(currentLocation);
         } else {
             this.addDebugLog('暂无位置数据，等待位置更新');
         }
@@ -895,6 +930,7 @@ class DetailPage {
             this.proximityCheckTimeout = null;
         }
         this.lastProximityCheck = 0;
+        this.isProximityChecking = false; // 重置检查锁
         
         // 停止所有音频播放
         this.stopAudio();
@@ -903,6 +939,9 @@ class DetailPage {
         this.audioRangeStates.forEach((state, recordId) => {
             state.hasPlayedInRange = false;
         });
+        
+        // 清理播放锁
+        this.audioPlayLocks.clear();
         
         // 确保状态重置
         this.isPlaying = false;
@@ -926,6 +965,10 @@ class DetailPage {
             clearTimeout(this.proximityCheckTimeout);
             this.proximityCheckTimeout = null;
         }
+        
+        // 清理锁机制
+        this.isProximityChecking = false;
+        this.audioPlayLocks.clear();
         
         // 清理所有音频资源
         this.stopAudio();
@@ -963,9 +1006,9 @@ class DetailPage {
         // 更新调试信息（总是调用，内部会处理显示/隐藏）
         this.updateDebugInfo();
         
-        // 如果正在追踪，立即执行一次位置检查，防止防抖导致首次不触发
+        // 如果正在追踪，使用防抖机制检查位置
         if (this.isTracking) {
-            this.checkProximityToMarkers(location);
+            this.debouncedProximityCheck(location);
         }
     }
 
@@ -1055,82 +1098,94 @@ class DetailPage {
             return;
         }
         
-        this.addDebugLog('开始位置检查');
-        
-                const storedData = this.getDataFromLocalStorage(this.userId);
-        if (!storedData || !storedData.locations) {
+        // 防止重复检查 - 如果正在检查中，直接返回
+        if (this.isProximityChecking) {
+            this.addDebugLog('位置检查正在进行中，跳过本次检查');
             return;
         }
-
-        const nearby = this.findNearbyMarkers(userLocation, 50);
         
-        const playableRecords = [];
+        this.isProximityChecking = true;
+        this.addDebugLog('开始位置检查');
         
-        // 检查所有附近的marker
-        for (const { marker, distance, idx } of nearby) {
-            const key = `${marker.latitude}_${marker.longitude}`;
-            const audioData = storedData.records[key];
-            if (!audioData || !audioData.records.length) {
-                continue;
+        try {
+            const storedData = this.getDataFromLocalStorage(this.userId);
+            if (!storedData || !storedData.locations) {
+                return;
             }
+
+            const nearby = this.findNearbyMarkers(userLocation, 50);
             
-            // 检查每条record
-            for (const record of audioData.records) {
-                if (!record.isPlay) {
+            const playableRecords = [];
+            
+            // 检查所有附近的marker
+            for (const { marker, distance, idx } of nearby) {
+                const key = `${marker.latitude}_${marker.longitude}`;
+                const audioData = storedData.records[key];
+                if (!audioData || !audioData.records.length) {
                     continue;
                 }
                 
-                // 检查是否在播放范围内（纯检查，不更新状态）
-                const isInRange = this.isAudioInRange(record, userLocation);
-                if (isInRange) {
-                    // 更新状态
-                    this.updateAudioRangeState(record.record_id, true);
-                    playableRecords.push({ record, distance, idx });
-                } else {
-                    // 不在范围内，更新状态
-                    this.updateAudioRangeState(record.record_id, false);
+                // 检查每条record
+                for (const record of audioData.records) {
+                    if (!record.isPlay) {
+                        continue;
+                    }
+                    
+                    // 检查是否在播放范围内（纯检查，不更新状态）
+                    const isInRange = this.isAudioInRange(record, userLocation);
+                    if (isInRange) {
+                        // 更新状态
+                        this.updateAudioRangeState(record.record_id, true);
+                        playableRecords.push({ record, distance, idx });
+                    } else {
+                        // 不在范围内，更新状态
+                        this.updateAudioRangeState(record.record_id, false);
+                    }
                 }
             }
-        }
-        
-        // 播放所有符合条件的音频
-        const playPromises = [];
-        for (const { record } of playableRecords) {
             
-            // 检查是否已经在播放
-            if (this.playingRecords.has(record.record_id)) {
-                this.addDebugLog(`音频 ${record.record_id} 已在播放中，跳过`);
-                continue;
+            // 播放所有符合条件的音频
+            const playPromises = [];
+            for (const { record } of playableRecords) {
+                
+                // 检查是否已经在播放
+                if (this.playingRecords.has(record.record_id)) {
+                    this.addDebugLog(`音频 ${record.record_id} 已在播放中，跳过`);
+                    continue;
+                }
+                
+                // 检查是否在范围内已播放过（避免重复播放）
+                const rangeState = this.audioRangeStates.get(record.record_id);
+                if (rangeState && rangeState.hasPlayedInRange) {
+                    this.addDebugLog(`音频 ${record.record_id} 在范围内已播放过，跳过`);
+                    continue;
+                }
+                
+                try {
+                    const playPromise = this.playAudio(record, this.userId).catch(error => {
+                        this.addDebugLog(`音频 ${record.record_id} 播放失败: ${error.message}`);
+                    });
+                    playPromises.push(playPromise);
+                } catch (error) {
+                    this.addDebugLog(`准备播放音频 ${record.record_id} 失败: ${error.message}`);
+                }
             }
             
-            // 检查是否在范围内已播放过（避免重复播放）
-            const rangeState = this.audioRangeStates.get(record.record_id);
-            if (rangeState && rangeState.hasPlayedInRange) {
-                this.addDebugLog(`音频 ${record.record_id} 在范围内已播放过，跳过`);
-                continue;
+            // 等待所有播放操作完成，但不阻塞
+            if (playPromises.length > 0) {
+                Promise.allSettled(playPromises);
             }
             
-            try {
-                const playPromise = this.playAudio(record, this.userId).catch(error => {
-                    this.addDebugLog(`音频 ${record.record_id} 播放失败: ${error.message}`);
-                });
-                playPromises.push(playPromise);
-            } catch (error) {
-                this.addDebugLog(`准备播放音频 ${record.record_id} 失败: ${error.message}`);
+            // 停止不在范围内的音频（使用防抖机制）
+            const currentPlayingIds = Array.from(this.playingRecords);
+            for (const recordId of currentPlayingIds) {
+                if (this.shouldStopAudio(recordId, playableRecords)) {
+                    this.stopSpecificAudio(recordId);
+                }
             }
-        }
-        
-        // 等待所有播放操作完成，但不阻塞
-        if (playPromises.length > 0) {
-            Promise.allSettled(playPromises);
-        }
-        
-        // 停止不在范围内的音频（使用防抖机制）
-        const currentPlayingIds = Array.from(this.playingRecords);
-        for (const recordId of currentPlayingIds) {
-            if (this.shouldStopAudio(recordId, playableRecords)) {
-                this.stopSpecificAudio(recordId);
-            }
+        } finally {
+            // 确保检查锁被释放
+            this.isProximityChecking = false;
         }
     }
 
